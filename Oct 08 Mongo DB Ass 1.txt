@@ -1,0 +1,90 @@
+use retail db
+db.datatype_practice.insertMany([
+  {
+    product id: 501,
+    product_name: "Laptop",
+    price: 65000,
+    stock: 10,
+    available: true,
+    launch date: ISODate("2026-01-10"),
+    colors: ["Black", "Silver"],
+    details: {
+      brand: "Dell",
+      warranty_years: 2
+    }
+  },
+  {
+    product_id: 502,
+    product_name: "Headphones",
+    price: 4500,
+    stock: 25,
+    available: true,
+    launch date: ISODate("2026-03-15"),
+    colors: ["Black", "Blue"],
+    details: {
+      brand: "Sony",
+      warranty_years: 1
+    }
+  },
+  {
+    product_id: 503,
+    product name: "Office Chair",
+    price: 9000,
+    stock: 0,
+    available: false,
+    launch date: ISODate("2025-12-20"),
+    colors: ["Black", "Grey"],
+    details: {
+      brand: "GreenSoul",
+      warranty_years: 3
+    }
+  },
+  }
+    product_id: 504,
+    product_name: "Smart Watch",
+    price: 18000,
+    stock: 8,
+    available: true,
+    launch date: ISODate("2026-06-01"),
+    colors: ["Black", "Red"],
+    details: {
+      brand: "Samsung",
+      warranty_years: 1
+    }
+  }
+])
+
+
+
+1.	db.datatype_practice.find()
+2.	db.datatype_practice.find({product_name: "Laptop"})
+3.	db.datatype_practice.find({price: {$gt: 10000}})
+4.	db.datatype_practice.find({stock: {$lt: 10}})
+5.	db.datatype_practice.find({available: true})
+6.	db.datatype_practice.find({available: false})
+7.	db.datatype_practice.find({launch_date: {$gt: ISODate("2026-01-01")}})
+8.	db.datatype_practice.find({colors: "Black"})
+9.	db.datatype_practice.find({colors: {$all: ["Black", "Blue"]}})
+10.	db.datatype_practice.find({details.brand: "Samsung"})
+11.	db.datatype_practice.find({"details.warranty_years": {$gt: 1}})
+12.	db.datatype_practice.updateOne(
+	  {product_id: 502},
+	  {$inc: {stock: 5}}
+	)
+13.	db.datatype_practice.updateOne(
+	  {product_id: 503},
+	  {$set: {available: true}}
+	)
+14.	db.datatype_practice.updateOne(
+	  {product_id: 501},
+	  {$push: {colors: "White"}}
+	)
+15.	db.datatype_practice.updateOne(
+	  {product_id: 504},
+	  {$set: {"details.warranty_years": 2}}
+	)
+16.	db.datatype_practice.find({}, {_id: 0, product_name: 1, price: 1})
+17.	db.datatype_practice.find({price: {$type: "number"}})
+18.	db.datatype_practice.find({available: {$type: "bool"}})
+19.	db.datatype_practice.find({launch_date: {$type: "date"}})
+20.	db.datatype_practice.find({colors: {$type: "array"}})
