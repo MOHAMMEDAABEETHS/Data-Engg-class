@@ -1,0 +1,81 @@
+import csv
+
+headers = ["shipment_id", "customer", "city", "weight", "status", "cost"]
+data = [
+    ["S101", "Alpha Stores", "Hyderabad", 12.5, "Delivered", 850],
+    ["S102", "Metro Mart", "Mumbai", 8.2, "In Transit", 620],
+    ["S103", "Fresh Foods", "Hyderabad", 15.0, "Delivered", 1100],
+    ["S104", "Quick Shop", "Pune", 5.5, "Pending", 450],
+    ["S105", "Urban Retail", "Mumbai", 20.0, "Delivered", 1450],
+    ["S106", "Daily Needs", "Delhi", 9.8, "In Transit", 700],
+    ["S107", "Smart Bazaar", "Hyderabad", 7.5, "Pending", 550],
+    ["S108", "Green Market", "Delhi", 18.2, "Delivered", 1300]
+]
+
+with open("shipments.csv", mode="w", newline="") as file:
+    writer = csv.writer(file)
+
+    # we can write lists as rows in csv
+    writer.writerow(headers)
+
+    for row in data:
+        writer.writerow(row)
+shipments = []
+with open("shipments.csv", "r") as file:
+    reader = csv.DictReader(file)
+    for row in reader:
+        row["weight"] = float(row["weight"])
+        row["cost"] = float(row["cost"])
+        shipments.append(row)
+
+print("3. Complete List")
+for s in shipments:
+    print(s)
+
+print("\n4. ID, Customer, Status")
+for s in shipments:
+    print(f"ID: {s['shipment_id']}, Customer: {s['customer']}, Status: {s['status']}")
+
+total_cost = sum(s["cost"] for s in shipments)
+print(f"\n6. Total Shipping Cost: {total_cost} ")
+
+print("\n7. Cost > 700")
+cost_above_700 = [s for s in shipments if s["cost"] > 700]
+for s in cost_above_700:
+    print(s)
+
+print("\n8. Delivered Shipments")
+delivered_shipments = [s for s in shipments if s["status"] == "Delivered"]
+for s in delivered_shipments:
+    print(s)
+
+print("\n9. Weight > 10")
+heavy_shipments = [s for s in shipments if s["weight"] > 10]
+for s in heavy_shipments:
+    print(s)
+
+all_cities = [s["city"] for s in shipments]
+print(f"\n10. All Cities: {all_cities}")
+
+unique_cities = set([s["city"] for s in shipments])
+print(f"\n11. Unique Cities: {unique_cities}")
+
+print("\n12. Sorted by Cost (Lowest to Highest)")
+sorted_by_cost = sorted(shipments, key=lambda s: s["cost"])
+for s in sorted_by_cost:
+    print(s)
+
+print("\n13. Sorted by Weight (Highest to Lowest)")
+sorted_by_weight = sorted(shipments, key=lambda s: s["weight"], reverse=True)
+for s in sorted_by_weight:
+    print(s)
+
+print("\n14. Sorted Alphabetically by Customer")
+sorted_by_customer = sorted(shipments, key=lambda s: s["customer"])
+for s in sorted_by_customer:
+    print(s)
+
+print("\n15. Cost per KG for each shipment")
+cost_per_kg_list = [f"Shipment {s['shipment_id']} ({s['customer']}): {s['cost'] / s['weight']:.2f} per kg" for s in shipments]
+for entry in cost_per_kg_list:
+    print(entry)
