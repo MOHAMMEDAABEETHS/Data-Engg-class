@@ -1,0 +1,44 @@
+sales = [
+    ("North", 12000),
+    ("South", 18000),
+    ("West", 9500),
+    ("North", 22000),
+    ("East", 15000),
+    ("South", 11000)
+]
+
+print("1. All Tuples")
+for item in sales:
+    print(item)
+
+print("\n2. Regions Only")
+for region, _ in sales:
+    print(region)
+
+print("\n3. Sales Amount Only")
+for _, amount in sales:
+    print(amount)
+
+print("\n4. Sales > 12000")
+high_sales = [item for item in sales if item[1] > 12000]
+for item in high_sales:
+    print(item)
+
+total_sales = sum(amount for _, amount in sales)
+print(f"\n5. Total Sales: {total_sales}")
+
+max_sale = max(sales, key=lambda x: x[1])
+min_sale = min(sales, key=lambda x: x[1])
+print(f"\n6. Highest Sale: {max_sale}, Lowest Sale: {min_sale}")
+
+sales_amounts = [amount for _, amount in sales]
+print(f"\n7. Sales Amounts List: {sales_amounts}")
+
+unique_regions = set(region for region, _ in sales)
+print(f"\n8. Unique Regions: {unique_regions}")
+
+sorted_by_amount = sorted(sales, key=lambda x: x[1])
+print(f"\n9. Sorted by Sales Amount: {sorted_by_amount}")
+
+sorted_by_region = sorted(sales, key=lambda x: x[0])
+print(f"\n10. Sorted by Region Name: {sorted_by_region}")
