@@ -1,0 +1,101 @@
+import json
+
+json_data = [
+    {
+        "project_id": 101,
+        "project_name": "Data Migration",
+        "department": "IT",
+        "budget": 450000,
+        "technologies": ["Python", "SQL", "Azure"],
+        "team": [
+            {"name": "Vikram", "role": "Engineer", "experience": 4},
+            {"name": "Meera", "role": "Analyst", "experience": 3}
+        ]
+    },
+    {
+        "project_id": 102,
+        "project_name": "Customer Analytics",
+        "department": "Analytics",
+        "budget": 300000,
+        "technologies": ["Python", "Pandas", "Power BI"],
+        "team": [
+            {"name": "Karan", "role": "Data Analyst", "experience": 5},
+            {"name": "Zoya", "role": "Developer", "experience": 2}
+        ]
+    },
+    {
+        "project_id": 103,
+        "project_name": "Cloud Modernization",
+        "department": "Cloud",
+        "budget": 600000,
+        "technologies": ["Azure", "Docker", "Python"],
+        "team": [
+            {"name": "Naveen", "role": "Cloud Engineer", "experience": 6},
+            {"name": "Isha", "role": "Engineer", "experience": 4}
+        ]
+    }
+]
+
+with open("projects.json", "w") as f:
+    json.dump(json_data, f, indent=4)
+
+with open("projects.json", "r") as f:
+    projects = json.load(f)
+
+print(f"2. Datatype of returned object: {type(projects)}")
+
+print("\n3. Project Names")
+for p in projects:
+    print(p["project_name"])
+
+print("\n4. Projects with Budget > 4,00,000")
+for p in projects:
+    if p["budget"] > 400000:
+        print(f"{p['project_name']} (Budget: {p['budget']})")
+
+print("\n5. Projects using Python")
+for p in projects:
+    if "Python" in p["technologies"]:
+        print(p["project_name"])
+
+total_budget = sum(p["budget"] for p in projects)
+print(f"\n6. Total Budget: {total_budget}")
+
+all_technologies = []
+for p in projects:
+    all_technologies.extend(p["technologies"])
+print(f"\n7. All Technologies: {all_technologies}")
+
+unique_technologies = list(set(all_technologies))
+print(f"\n8. Unique Technologies: {unique_technologies}")
+
+print("\n9. Team Members Details")
+for p in projects:
+    for member in p["team"]:
+        print(f"Name: {member['name']}, Role: {member['role']}, Experience: {member['experience']} yrs")
+
+print("\n10. Team Members with > 3 Years Experience")
+for p in projects:
+    for member in p["team"]:
+        if member["experience"] > 3:
+            print(f"{member['name']} ({member['experience']} yrs)")
+
+total_members = sum(len(p["team"]) for p in projects)
+print(f"\n11. Total Team Members: {total_members}")
+
+print("\n12. Projects Sorted by Budget (Highest to Lowest)")
+sorted_by_budget = sorted(projects, key=lambda x: x["budget"], reverse=True)
+for p in sorted_by_budget:
+    print(f"{p['project_name']}: {p['budget']}")
+
+print("\n13. Projects Sorted Alphabetically by Name")
+sorted_by_name = sorted(projects, key=lambda x: x["project_name"])
+for p in sorted_by_name:
+    print(p["project_name"])
+
+print("\n14. Projects with Team Members Sorted by Experience")
+for p in projects:
+    p["team"] = sorted(p["team"], key=lambda member: member["experience"])
+    print(f"Project: {p['project_name']}")
+    for member in p["team"]:
+        print(f"  - {member['name']}: {member['experience']} yrs")
