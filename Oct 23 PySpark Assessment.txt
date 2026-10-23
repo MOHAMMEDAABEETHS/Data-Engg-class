@@ -1,0 +1,609 @@
+!pip install pyspark
+
+
+
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder \
+        .appName("Working with dataframes") \
+        .getOrCreate()
+
+
+
+Section - 1:
+------------
+
+
+from google.colab import files
+
+uploaded = files.upload()
+
+df = spark.read.csv(
+    "manufacturing_production_120k.csv",
+    header = True,
+    inferSchema = True
+)
+
+
+1) df.show(20)
+
+2) df.printSchema()
+
+3) df.columns
+
+4) df.count()
+
+5) df.select("production_id", "plant_id", "machine_id", "product_family", "units_produced").show()
+
+6) df.printSchema()
+
+7) df.sample(withReplacement=False, fraction=0.0001, seed=42).show(10)
+
+
+
+Section - 2:
+------------
+
+
+from pyspark.sql.types import StructType, StructField, StringType
+
+plant_data_tuples = [("PL01", "Hyderabad Plant", "Hyderabad"), ("PL02", "Pune Plant", "Pune")]
+
+
+1) df_tuples = spark.createDataFrame(plant_data_tuples)
+
+2) columns = ["plant_id", "plant_name", "city"]
+   df_explicit = spark.createDataFrame(plant_data_tuples, schema=columns)
+
+3) schema = StructType([
+    StructField("plant_id", StringType(), True),
+    StructField("plant_name", StringType(), True),
+    StructField("city", StringType(), True)
+   ])
+
+   df_struct = spark.createDataFrame(plant_data_tuples, schema=schema)
+
+
+4) df_struct.printSchema()
+
+
+5) from pyspark.sql.functions import lit
+
+   df_struct_with_country = df_struct.withColumn("country", lit("India"))
+
+   df_struct_with_country.show()
+
+
+
+
+Section - 3:
+------------
+
+
+import pandas as pd
+
+pdf = pd.read_csv("manufacturing_production_120k.csv")
+
+
+1) pdf.head(5)
+
+2) pdf.tail(5)
+
+3) pdf.shape
+
+4) pdf.columns.tolist()
+
+5) pdf.dtypes
+
+6) selected_pdf = pdf[['plant_id', 'machine_id', 'units_produced']]
+
+7) renamed_pdf = selected_pdf.rename(columns={'units_produced': 'production_output'})
+
+8) rejects_pdf = pdf[pdf['quality_status'] == 'Reject']
+
+9) high_temp_pdf = pdf[pdf['temperature_c'] > 75]
+
+
+10) night_hyd_pdf = pdf[(pdf['shift'] == 'Night') & (pdf['plant_id'] == 'PL01')]
+
+    night_hyd_pdf.head()
+
+
+
+
+Section - 4:
+------------
+
+
+import dask.dataframe as dd
+
+ddf = dd.read_csv("manufacturing_production_120k.csv")
+
+
+1) ddf.head()
+
+2) ddf.npartitions
+
+3) subset_ddf = ddf[['plant_id', 'product_family', 'units_produced']]
+
+4) rejected_ddf = ddf[ddf['quality_status'] == 'Reject']
+
+5) avg_units_plant = ddf.groupby('plant_id')['units_produced'].mean()
+
+6) total_defects_family = ddf.groupby('product_family')['defective_units'].sum()
+
+
+7) avg_units_plant.compute()
+
+   total_defects_family.compute()
+
+
+8) Comparison:
+   -----------
+
+
+import pandas as pd
+import dask.dataframe as dd
+import time
+
+#Pandas Aggregation
+
+start_time = time.time()
+pdf = pd.read_csv("manufacturing_production_120k.csv")
+pandas_result = pdf.groupby('plant_id')['units_produced'].mean()
+pandas_time = time.time() - start_time
+
+print("=== Pandas Result ===")
+print(pandas_result)
+print(f"Pandas Execution Time: {pandas_time:.4f} seconds\n")
+
+#Dask Aggregation
+
+start_time = time.time()
+ddf = dd.read_csv("manufacturing_production_120k.csv")
+dask_agg = ddf.groupby('plant_id')['units_produced'].mean()dask_result = dask_agg.compute()
+dask_time = time.time() - start_time
+
+print("=== Dask Result ===")
+print(dask_result)
+print(f"Dask Execution Time: {dask_time:.4f} seconds")
+
+
+
+
+Section - 5:
+------------
+
+
+from pyspark.sql.functions import col
+
+df_manipulated = df \
+    .withColumn("production_efficiency", (col("units_produced") / col("units_planned")) * 100) \ 	#1
+    .withColumn("good_units", col("units_produced") - col("defective_units")) \ 			#2
+    .withColumn("country", lit("India")) \ 								#3
+    .withColumnRenamed("energy_kwh", "energy_consumed") \ 						#4
+    .withColumn("units_produced", col("units_produced").cast("double")) \ 				#5
+    .withColumn("defect_percentage", (col("defective_units") / col("units_produced")) * 100) \ 		#6
+    .withColumn("energy_per_unit", col("energy_consumed") / col("units_produced")) 			#7
+
+
+8) df_manipulated.select("production_efficiency", "good_units", "country", "energy_consumed", "defect_percentage", "energy_per_unit").show()
+
+
+
+
+
+Section - 6:
+------------
+
+
+1) df_no_sup = df.drop("supervisor")
+
+2) df_no_sup_maint = df.drop("supervisor", "maintenance_flag")
+
+3) df_dedup = df.dropDuplicates()
+
+4) df_unique_prod = df.dropDuplicates(["production_id"])
+
+5) df_no_null_op = df.na.drop(subset=["operator_id"])
+
+6) df_no_null_sensor = df.na.drop(how="all", subset=["temperature_c", "vibration_mm_s"])
+
+7) df.select("product_family").distinct().show()
+
+8) df.select("plant_id", "machine_id").distinct().show()
+
+
+
+
+Section - 7:
+------------
+
+
+1) df.sort(col("units_produced").asc()).show()
+
+2) df.sort(col("units_produced").desc()).show()
+
+3) df.sort(col("defective_units").desc()).show()
+
+4) df.sort(col("plant_id"), col("units_produced").desc()).show()
+
+5) df.sort(col("units_produced").desc()).show(20)
+
+6) df.sort(col("downtime_minutes").desc()).show(10)
+
+7) df.sort(col("vibration_mm_s").desc()).select("machine_id", "vibration_mm_s").show()
+
+
+
+
+Section - 8:
+------------
+
+
+from pyspark.sql.functions import sum, avg, max, min
+
+df.select(
+    sum("units_planned").alias("total_units_planned"), 		#1
+    sum("units_produced").alias("total_units_produced"), 	#2
+    sum("defective_units").alias("total_defective_units"), 	#3
+    avg("units_produced").alias("avg_units_produced"), 		#4
+    max("units_produced").alias("max_production_output"), 	#5
+    min("units_produced").alias("min_production_output"), 	#6
+    avg("downtime_minutes").alias("avg_downtime"), 		#7
+    sum("energy_kwh").alias("total_energy_consumed"), 		#8
+    avg("temperature_c").alias("avg_temperature"), 		#9
+    avg("vibration_mm_s").alias("avg_vibration") 		#10
+).show()
+
+
+
+
+
+Section - 9:
+------------
+
+1) df.groupBy("plant_id").agg(sum("units_produced").alias("total_prod")).sort(col("total_prod").desc()).show()
+
+2) df.groupBy("product_family").agg(sum("units_produced").alias("total_prod")).sort(col("total_prod").desc()).show()
+
+3)df.groupBy("plant_id").agg(sum("defective_units").alias("total_defects")).sort(col("total_defects").desc()).show()
+
+4) df.groupBy("shift").agg(avg("downtime_minutes").alias("avg_downtime")).sort(col("avg_downtime").desc()).show()
+
+5) df.groupBy("product_family").agg(avg("energy_kwh").alias("avg_energy")).sort(col("avg_energy").desc()).show()
+
+6) df.groupBy("quality_status").count().sort(col("count").desc()).show()
+
+7) df.groupBy("plant_id", "shift").agg(sum("units_produced").alias("total_prod")).sort("plant_id", "shift").show()
+
+8) df.groupBy("plant_id", "product_family").agg(sum("defective_units").alias("total_defects")).sort("plant_id", "product_family").show()
+
+9) df.groupBy("machine_id").agg(avg("temperature_c").alias("avg_temp")).sort(col("avg_temp").desc()).show()
+
+10) df.groupBy("supervisor").agg(sum("units_produced").alias("total_output")).sort(col("total_output").desc()).show()
+
+
+
+
+
+
+Section - 10:
+-------------
+
+
+plant_df = spark.read.csv(
+	"plant_master.csv",
+	header=True,
+	inferSchema=True
+)
+
+
+machine_df = spark.read.csv(
+	"machine_master.csv",
+	header=True,
+	inferSchema=True
+)
+
+
+1) prod_plant_inner = df.join(plant_df, "plant_id", "inner")
+
+2) df.join(plant_df, "plant_id", "inner").select("production_id", "plant_name", "units_produced").show()
+
+3) prod_machine = df.join(machine_df, "machine_id", "inner")
+
+4) full_df = df.join(plant_df, df.plant_id == plant_df.plant_id, "inner") \
+            .join(machine_df, df.machine_id == machine_df.machine_id, "inner")
+
+5) df.join(plant_df, "plant_id").groupBy("city").agg(sum("units_produced").alias("total_prod")).show()
+
+6) df.join(machine_df, "machine_id").groupBy("machine_type").agg(avg("downtime_minutes").alias("avg_downtime")).show()
+
+7) df.join(plant_df, "plant_id").groupBy("region").agg(sum("defective_units").alias("total_defects")).show()
+
+8) df.join(machine_df, "machine_id", "left_anti").show()
+
+9) df.join(machine_df, "machine_id", "left").filter(machine_df.machine_id.isNull()).show()
+
+10) df.join(plant_df, "plant_id").groupBy("plant_name").agg(sum("energy_kwh").alias("total_energy")).show()
+
+
+
+
+Section - 11:
+-------------
+
+
+from pyspark.sql.functions import when
+
+1) df_updated = df.withColumn("quality_status", when(col("quality_status") == "Reject", "Failed").otherwise(col("quality_status")))
+
+2) df_updated = df_updated.withColumn("quality_status", when(col("quality_status") == "Rework", "Requires Review").otherwise(col("quality_status")))
+
+3) df_updated = df_updated.withColumn("units_planned", when(col("product_family") == "Motors", col("units_planned") * 1.05).otherwise(col("units_planned")))
+
+4) df_updated = df_updated.withColumn("energy_kwh", when(col("shift") == "Night", col("energy_kwh") * 1.03).otherwise(col("energy_kwh")))
+
+5) df_updated = df_updated.na.fill({"operator_id": "UNASSIGNED"})
+
+6) df_updated = df_updated.withColumn("supervisor", when(col("supervisor") == "Anita", "Anita Rao").otherwise(col("supervisor")))
+
+7) df_updated = df_updated.withColumn("corrected_temperature", when(col("temperature_c") > 95, 95.0).otherwise(col("temperature_c")))
+
+
+
+
+
+Section - 12:
+-------------
+
+
+from pyspark.sql.functions import coalesce, lit
+
+
+
+1) df.filter(col("operator_id").isNull()).count()
+
+2) df.filter(col("temperature_c").isNull()).count()
+
+3) df.filter(col("vibration_mm_s").isNull()).count()
+
+4) df.filter(col("downtime_minutes").isNull()).count()
+
+5) df_dropped = df.na.drop()
+
+6) df_drop_temp = df.na.drop(subset=["temperature_c"])
+
+7) df_fill_downtime = df.na.fill({"downtime_minutes": 0})
+
+8) df_fill_op = df.na.fill({"operator_id": "UNKNOWN"})
+
+
+9) avg_temp = df.select(avg("temperature_c")).collect()[0][0]
+
+   df_fill_avg_temp = df.na.fill({"temperature_c": avg_temp})
+
+
+10) df.count()
+    df_dropped.count()
+
+
+
+
+
+Section - 13:
+-------------
+
+
+from pyspark.sql.functions import upper, lower, trim, length, concat, concat_ws, round, abs, regexp_replace, substring
+
+df.select(
+    upper(col("product_family")).alias("family_upper"), 					#1
+    lower(col("supervisor")).alias("supervisor_lower"), 					#2
+    trim(col("operator_id")).alias("operator_trimmed"), 					#3
+    length(col("product_code")).alias("code_length"), 						#4
+    concat(col("plant_id"), lit("-"), col("machine_id")).alias("plant_machine"), 		#5
+    concat_ws("-", col("plant_id"), col("machine_id"), col("shift")).alias("ws_combined"), 	#6
+    round(col("temperature_c"), 1).alias("rounded_temp"), 					#6
+    abs(col("units_planned") - col("units_produced")).alias("diff_units"), 			#7
+    regexp_replace(col("production_id"), "PR", "PROD").alias("reg_prod_id"), 			#8
+    substring(col("product_code"), 1, 3).alias("code_substr"), 					#9
+    coalesce(col("temperature_c"), lit(70.0)).alias("coalesce_temp") 				#10
+).show()
+
+
+
+
+
+
+Section - 14:
+-------------
+
+
+df_categorized = df \
+    .withColumn("efficiency", (col("units_produced") / col("units_planned")) * 100) \
+    .withColumn("efficiency_category",
+        when(col("efficiency") >= 100, "Above Target")
+        .when(col("efficiency") >= 95, "On Target")
+        .when(col("efficiency") >= 85, "Below Target")
+        .otherwise("Critical")
+    ) \
+    .withColumn("defect_category",
+        when(col("defective_units") == 0, "Perfect")
+        .when((col("defective_units") >= 1) & (col("defective_units") <= 10), "Normal")
+        .when((col("defective_units") >= 11) & (col("defective_units") <= 25), "Attention")
+        .otherwise("High Defect")
+    ) \
+    .withColumn("machine_condition",
+        when((col("temperature_c") > 85) | (col("vibration_mm_s") > 5.0), "High")
+        .otherwise("Normal")
+    )
+
+
+df_categorized.groupBy("efficiency_category").count().show()
+df_categorized.groupBy("defect_category").count().show()
+df_categorized.groupBy("machine_condition").count().show()
+
+
+
+
+
+Section - 15:
+-------------
+
+
+from pyspark.sql.functions import explode
+
+machine_json = spark.read.option("multiline", "true").json("machine_configurations.json")
+
+
+1) machine_json.printSchema()
+
+2) machine_json.select("machine_id", "machine_type").show(5)
+
+
+
+
+
+machine_json.select(
+    "machine_id",
+    col("specifications.rated_power_kw").alias("rated_power"), 		#3
+    col("specifications.max_temperature_c").alias("max_temp"), 		#4
+    col("specifications.vibration_limit_mm_s").alias("vib_limit"), 	#5
+    col("maintenance.frequency_days").alias("maint_freq") 		#6
+).show(5)
+
+
+7 & 8) exploded_sensors = machine_json.withColumn("sensor_item", explode("col("sensors")"))
+
+9) exploded_sensors.select("machine_id", "sensor_item.sensor", "sensor_item.unit", "sensor_item.active").show(10)
+
+10) machine_json.filter(
+     col("sensors").getItem(0).getField("sensor") == "temperature"
+    ).select("machine_id").show()
+
+11) df.join(machine_json, "machine_id", "inner").show(5)
+
+
+
+
+
+
+Section - 16:
+-------------
+
+
+extra_df = spark.read.csv("manufacturing_production_extra_12k.csv", header=True, inferSchema=True)
+
+1) df.count()
+
+2) extra_df.count()
+
+3) union_df = df.union(extra_df)
+
+4) union_all_df = df.unionAll(extra_df)
+
+5) union_df.count()
+
+6) union_df.groupBy("production_id").count().filter(col("count") > 1).show()
+
+7) union_dedup = union_df.dropDuplicates(["production_id"])
+
+8) union_dedup.count()
+
+9) union_by_name = df.unionByName(extra_df)
+
+10) union_by_name.show(5)
+
+
+
+
+
+Section - 17:
+-------------
+
+
+from pyspark.sql.window import Window
+from pyspark.sql.functions import row_number, rank, dense_rank, lag, lead, sum as _sum, avg as _avg
+
+window_plant = Window.partitionBy("plant_id").orderBy(col("units_produced").desc())
+window_plant_no_order = Window.partitionBy("plant_id")
+window_machine_date = Window.partitionBy("machine_id").orderBy("production_date")
+
+1) ranked_df = df.withColumn("rn", row_number().over(window_plant)) \ 	#2
+              .withColumn("rk", rank().over(window_plant)) \ 		#3
+              .withColumn("drk", dense_rank().over(window_plant)) 	#4
+
+5) ranked_df.filter(col("rn") <= 5).show(10)
+
+
+6) machine_plant_window = Window.partitionBy("plant_id", "machine_id").orderBy(col("units_produced").desc())
+
+   df.withColumn("rn", row_number().over(machine_plant_window)).filter(col("rn") <= 3).show()
+
+
+7) df.withColumn("total_plant_prod", _sum("units_produced").over(window_plant_no_order)).show(5)
+
+8) df.withColumn("avg_mach_output", _avg("units_produced").over(Window.partitionBy("machine_id"))).show(5)
+
+9) df.withColumn("cum_prod", _sum("units_produced").over(window_machine_date)).show(5)
+
+
+df_lag_lead = df.withColumn("prev_output", lag("units_produced", 1).over(window_machine_date)) \ 	#10
+                .withColumn("next_output", lead("units_produced", 1).over(window_machine_date)) \ 	#11
+                .withColumn("output_change", col("units_produced") - col("prev_output")) 		#12
+
+df_lag_lead.select("production_id", "machine_id", "units_produced", "prev_output", "output_change").show()
+
+
+13) fam_window = Window.orderBy(col("total_output").desc())
+    df.groupBy("product_family").agg(_sum("units_produced").alias("total_output")) \
+    .withColumn("fam_rank", rank().over(fam_window)).show()
+
+
+
+
+
+
+
+Section - 18:
+-------------
+
+
+from pyspark.sql.functions import to_date, year, month, dayofmonth, date_format, expr, datediff, current_date
+
+1) df_date = df.withColumn("prod_date", to_date(col("production_date"), "yyyy-MM-dd"))
+
+
+df_date_extracted = df_date \
+    .withColumn("prod_year", year(col("prod_date"))) \ 				#2
+    .withColumn("prod_month", month(col("prod_date"))) \			#3
+    .withColumn("prod_day", dayofmonth(col("prod_date"))) \ 			#4
+    .withColumn("month_name", date_format(col("prod_date"), "MMMM")) \ 		#5
+    .withColumn("day_name", date_format(col("prod_date"), "EEEE")) \ 		#6
+    .withColumn("year_month", date_format(col("prod_date"), "yyyy-MM")) 	#7
+
+
+df_date_extracted.groupBy("year_month").agg(
+    sum("units_produced").alias("monthly_production"), 		#8
+    sum("defective_units").alias("monthly_defects") 		#9
+).sort("year_month").show()
+
+
+10) df_date_extracted.groupBy("year_month", "plant_id").agg(sum("units_produced").alias("prod")).show(5)
+
+11) df_date.filter((col("prod_date") >= "2026-06-01") & (col("prod_date") <= "2026-06-30")).show(5)
+
+
+df_date_arithmetic = df_date \
+    .withColumn("plus_7_days", expr("date_add(prod_date, 7)")) \ 		#11
+    .withColumn("minus_30_days", expr("date_sub(prod_date, 30)")) \ 		#12
+    .withColumn("days_from_today", datediff(current_date(), col("prod_date"))) 	#13
+
+14) df_date_arithmetic.select("production_date", "plus_7_days", "minus_30_days", "days_from_today").show(5)
+
+
+15) df_date_extracted.groupBy("year_month") \
+     .agg(sum("units_produced").alias("total_output")) \
+     .sort(col("total_output").desc()) \
+     .show(1)
