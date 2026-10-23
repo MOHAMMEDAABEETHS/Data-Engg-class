@@ -1,0 +1,286 @@
+PySpark Assessment:
+
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+spark = SparkSession.builder.appName("PySpark Training").getOrCreate()
+
+
+
+
+from google.colab import files
+
+uploaded = files.upload()
+
+df = spark.read.csv(
+    "retail_transactions_100k.csv",
+    header = True,
+    inferSchema = True
+)
+
+df.show()
+
+
+
+Set - 1:
+--------
+
+
+1) df.show(20)
+
+2) df.printSchema()
+
+3) df.columns
+
+4) df.count()
+
+5) df.select("order_id", "product_name", "city", "quantity", "unit_price").show()
+
+6) df.filter(col("category") == "Electronics").show()
+
+7) df.filter(col("city") == "Hyderabad").show()
+
+8) df.filter(col("quantity") > 3).show()
+
+9) df.filter(col("unit_price") > 20000).show()
+
+10) df.filter(col("status") == "Delivered").show()
+
+
+
+Set - 2:
+--------
+
+
+1) df.filter((col("category") == "Electronics") & (col("city") == "Hyderabad")).show()
+
+2) df.filter((col("status") == "Delivered") & (col("region") == "South")).show()
+
+3) df.filter((col("quantity") > 2) & (col("unit_price") > 10000)).show()
+
+4) df.filter(col("city").isin(["Mumbai", "Pune"])).show()
+
+5) df.filter(col("status") != "Cancelled").show()
+
+6) df.filter((col("category") == "Furniture") & (col("unit_price") > 8000)).show()
+
+7) df.filter((col("category") == "Accessories") & (col("quantity") > 3)).show()
+
+
+
+Set - 3:
+--------
+
+
+1) df.select("order_id", "customer_name", "product_name", "unit_price").show()
+
+2) df2 = df.withColumnRenamed("unit_price", "price")
+
+3) df2 = df.withColumnRenamed("customer_name", "customer")
+
+4) df2 = df.drop("rating")
+
+5) df_new = df.drop("customer_name", "rating", "payment_method")
+
+
+
+Set - 4:
+--------
+
+
+1) df2 = df.withColumn("gross_amount", col("quantity") * col("unit_price"))
+
+2) df2 = df2.withColumn("discount_amount", col("gross_amount") * (col("discount_pct") / 100))
+
+3) df2 = df2.withColumn("final_amount", col("gross_amount") - col("discount_amount"))
+
+4) df2 = df2.withColumn("country", lit("India"))
+
+5) df2 = df2.withColumn("high_value", when(col("final_amount") >= 50000, "Yes").otherwise("No"))
+
+
+
+Set - 5:
+--------
+
+
+1) df2 = df.withColumn("gross_amount", col("quantity") * col("unit_price")) \
+        .withColumn("final_amount", col("gross_amount") - (col("gross_amount") * col("discount_pct") / 100)) \
+        .withColumn("order_size", 
+                    when(col("final_amount") >= 50000, "High")
+                    .when(col("final_amount") >= 15000, "Medium")
+                    .otherwise("Low"))
+
+2) df2 = df.withColumn("quantity_type", when(col("quantity") >= 4, "Bulk").otherwise("Regular"))
+
+3) df2 = df.withColumn("delivery_category", 
+                    when(col("status") == "Delivered", "Completed")
+                    .when(col("status").isin(["Cancelled", "Returned"]), "Failed")
+                    .otherwise("In Progress"))
+
+
+
+Set - 6:
+--------
+
+
+1) df.sort(col("unit_price").desc()).show()
+
+2) df.sort(col("quantity").desc()).show()
+
+3) df.sort(col("city").asc()).show()
+
+4) df2 = df.withColumn("final_amount", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100))
+   df2.sort(col("region").asc(), col("final_amount").desc()).show()
+
+5) df2 = df.withColumn("final_amount", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100))
+   df2.sort(col("final_amount").desc()).limit(10).show()
+
+
+
+Set - 7:
+--------
+
+
+1) df.select("city").distinct().show()
+
+2) df.select("region").distinct().show()
+
+3) df.select("category").distinct().show()
+
+4) df.select("payment_method").distinct().show()
+
+5) df.select("customer_id").distinct().count()
+
+6) df.select("product_id").distinct().count()
+
+
+
+Set - 8:
+--------
+
+
+1) df.select(sum("quantity")).show()
+
+2) df.withColumn("gross", col("quantity") * col("unit_price")).select(sum("gross")).show()
+
+3) df.select(avg("unit_price")).show()
+
+4) df.select(max("unit_price")).show()
+
+5) df.select(min("unit_price")).show()
+
+6) df.withColumn("discount", (col("quantity") * col("unit_price")) * (col("discount_pct") / 100)) \
+  .select(sum("discount")).show()
+
+7) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .select(sum("final")).show()
+
+
+
+Set - 9:
+--------
+
+
+1) df.groupBy("status").count().show()
+
+2) df.groupBy("category").count().show()
+
+3) df.groupBy("city").count().show()
+
+4) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("region").agg(sum("final").alias("total_sales")).show()
+
+5) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("category").agg(sum("final").alias("total_sales")).show()
+
+6) df.groupBy("category").agg(avg("unit_price").alias("avg_unit_price")).show()
+
+7) df.groupBy("product_id", "product_name").agg(sum("quantity").alias("total_quantity")).show()
+
+8) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("payment_method").agg(sum("final").alias("total_sales")).show()
+
+9) df.groupBy("product_id", "product_name").agg(avg("rating").alias("avg_rating")).show()
+
+10) df.groupBy("city", "status").count().show()
+
+
+
+Set - 10:
+--------
+
+
+1) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("city").agg(sum("final").alias("total_sales")) \
+  .sort(col("total_sales").desc()).show()
+
+2) df.groupBy("product_id", "product_name").agg(sum("quantity").alias("total_quantity")) \
+  .sort(col("total_quantity").desc()).show()
+
+3) df.groupBy("category").agg(avg("unit_price").alias("avg_price")) \
+  .sort(col("avg_price").desc()).show()
+
+4) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("city").agg(sum("final").alias("total_sales")) \
+  .sort(col("total_sales").desc()).limit(5).show()
+
+5) df.groupBy("product_id", "product_name").agg(sum("quantity").alias("total_quantity")) \
+  .sort(col("total_quantity").desc()).limit(5).show()
+
+6) df.withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("customer_id", "customer_name").agg(sum("final").alias("total_purchase")) \
+  .sort(col("total_purchase").desc()).limit(10).show()
+
+
+
+Set - 11:
+--------
+
+
+1) df2 = df.withColumn("year", year(col("order_date")))
+
+2) df2 = df.withColumn("month", month(col("order_date")))
+
+3) df2 = df.withColumn("day", dayofmonth(col("order_date")))
+
+4) df.withColumn("month", month(col("order_date"))) \
+  .groupBy("month").count().sort("month").show()
+
+5) df.withColumn("month", month(col("order_date"))) \
+  .withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("month").agg(sum("final").alias("total_sales")).sort("month").show()
+
+6) df.withColumn("month", month(col("order_date"))) \
+  .withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("month", "category").agg(sum("final").alias("total_sales")).sort("month", "category").show()
+
+7) df.withColumn("month", month(col("order_date"))) \
+  .groupBy("month", "status").count().sort("month", "status").show()
+
+8) df.withColumn("month", month(col("order_date"))) \
+  .withColumn("final", (col("quantity") * col("unit_price")) * (1 - col("discount_pct")/100)) \
+  .groupBy("month").agg(sum("final").alias("total_sales")) \
+  .sort(col("total_sales").desc()).limit(1).show()
+
+
+
+Set - 12:
+--------
+
+
+1) df.filter(col("payment_method").isNull()).show()
+
+2) df.filter(col("payment_method").isNull()).count()
+
+3) df.filter(col("rating").isNull()).show()
+
+4) df.filter(col("rating").isNull()).count()
+
+5) df2 = df.na.fill({"payment_method": "Unknown"})
+
+6) df2 = df.na.fill({"rating": 0.0})
+
+7) df2 = df.na.drop(subset=["payment_method"])
