@@ -1,0 +1,218 @@
+!pip -q install pyspark
+
+from pyspark.sql import SparkSession
+
+from pyspark.sql import functions as F
+
+
+
+spark = SparkSession.builder.appName("LazyExecutionExercises").getOrCreate()
+
+
+
+# Load Data
+
+sales_df = spark.read.csv("lazy_execution_sales_25000.csv", header=True, inferSchema=True)
+
+products_df = spark.read.csv("lazy_execution_products.csv", header=True, inferSchema=True)
+
+stores_df = spark.read.csv("lazy_execution_stores.csv", header=True, inferSchema=True)
+
+
+
+PART - A:
+---------
+
+1) filtered_sales = sales_df.filter(sales_df.quantity > 5)
+
+
+2) selected_df = sales_df.select("order_id", "product_id", "quantity", "unit_price")
+
+   selected_df.show(5)
+
+
+3) high_price_df = sales_df.filter(sales_df.unit_price > 20000)
+
+   record_count = high_price_df.count()
+
+
+4) gross_df = sales_df.withColumn("gross_amount", sales_df.quantity * sales_df.unit_price)
+
+   gross_df.explain(True)
+
+   gross_df.select("order_id", "gross_amount").show(5)
+
+
+5) completed_sorted_df = sales_df.filter(sales_df.order_status == "Completed") \
+                              .orderBy(sales_df.unit_price.desc())
+
+   top_10 = completed_sorted_df.take(10)
+
+   for row in top_10:
+    print(row)
+
+
+
+
+PART - B:
+---------
+
+
+6) result_df = (sales_df
+    .filter(sales_df.order_status == "Completed")
+    .withColumn("gross_amount", sales_df.quantity * sales_df.unit_price)
+    .select("order_id", "store_id", "product_id", "quantity", "unit_price", "gross_amount")
+    .orderBy("gross_amount", ascending=False)
+   )
+
+   result_df.show(10)
+
+
+
+7) discounted_df = (sales_df
+    .filter(sales_df.discount_pct >= 10)
+    .withColumn("discounted_amount", (sales_df.quantity * sales_df.unit_price) * (1 - sales_df.discount_pct / 100))
+    .orderBy("discounted_amount", ascending=False)
+   )
+
+   discounted_df.show(15)
+
+
+8) payment_summary = (sales_df
+    .groupBy("payment_method")
+    .sum("quantity")
+    .withColumnRenamed("sum(quantity)", "total_quantity")
+    .orderBy("total_quantity", ascending=False)
+   )
+
+   payment_summary.show()
+
+
+9) channel_status_summary = (sales_df
+    .groupBy("sales_channel", "order_status")
+    .count()
+    .orderBy("sales_channel", "order_status")
+   )
+
+   channel_status_summary.show()
+
+
+10) subset_df = (sales_df
+    .select("order_id", "store_id", "product_id", "quantity")
+    .drop("store_id")
+    )
+
+    first_record = subset_df.first()
+
+    print(first_record)
+
+
+
+
+PART - C:
+---------
+
+
+11) sales_prod_df = sales_df.join(products_df, on="product_id", how="inner")
+
+    sales_prod_df.select("product_name", "category", "quantity", "unit_price").show(20, truncate=False)
+
+
+12) sales_store_df = sales_df.join(stores_df, on="store_id", how="inner")
+
+    city_quantity = (sales_store_df
+    	.groupBy("city")
+    	.sum("quantity")
+    	.withColumnRenamed("sum(quantity)", "total_quantity_sold")
+    	.orderBy("total_quantity_sold", ascending=False)
+    )
+
+    city_quantity.show()
+
+
+13) all_joined = (sales_df
+    .filter(sales_df.order_status == "Completed")
+    .join(products_df, on="product_id", how="inner")
+    .join(stores_df, on="store_id", how="inner")
+    )
+
+    revenue_df = (all_joined
+    .withColumn("revenue", all_joined.quantity * all_joined.unit_price)
+    .groupBy("category", "region")
+    .sum("revenue")
+    .withColumnRenamed("sum(revenue)", "total_revenue")
+    .orderBy("category", "region")
+    )
+
+    revenue_df.show(truncate=False)
+
+
+
+14) completed_sales = sales_df.filter(sales_df.order_status == "Completed")
+
+    joined_master = completed_sales.join(products_df, on="product_id", how="inner")
+
+    top_products = (joined_master
+      .withColumn("discounted_revenue", (joined_master.quantity * joined_master.unit_price) * (1 - joined_master.discount_pct / 100))
+      .groupBy("product_id", "product_name")
+      .sum("discounted_revenue")
+      .withColumnRenamed("sum(discounted_revenue)", "total_revenue")
+      .orderBy("total_revenue", ascending=False)
+    )
+
+    top_products.show(5, truncate=False)
+
+
+
+
+
+PART - D:
+---------
+
+
+15) df1 = sales_df.filter(sales_df.order_status == "Completed")
+
+    df2 = df1.select("store_id", "product_id", "quantity", "unit_price")
+
+    df3 = df2.withColumn("subtotal", df2.quantity * df2.unit_price)
+
+    df4 = df3.groupBy("store_id", "product_id").sum("subtotal")
+
+    df5 = df4.orderBy("sum(subtotal)", ascending=False)
+
+    df5.show(5)
+
+
+
+16) filtered_df = sales_df.filter(sales_df.quantity > 5)
+
+    filtered_df.explain()
+
+    filtered_df.show(5)
+
+    print(filtered_df.count())
+
+
+
+17) category_summary = (sales_df
+      .join(products_df, on="product_id")
+      .groupBy("category")
+      .sum("quantity")
+    )
+
+    results = category_summary.collect()
+
+    for row in results:
+        print(row)
+
+
+18) output_df = (sales_df
+      .filter(sales_df.order_status == "Completed")
+      .withColumn("discounted_revenue", (sales_df.quantity * sales_df.unit_price) * (1 - sales_df.discount_pct / 100))
+      .select("order_id", "product_id", "discounted_revenue")
+    )
+
+
+    output_df.write.mode("overwrite").parquet("completed_discounted_revenue.parquet")
+
+
