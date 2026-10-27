@@ -1,0 +1,653 @@
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark import StorageLevel
+from google.colab import files
+from pyspark.sql.functions import col, explode
+
+import time
+
+spark = SparkSession.builder \
+    .appName("LogisticsPracticeSet2") \
+    .getOrCreate()
+
+uploaded = files.upload()
+
+
+shipments_df = spark.read.option("header", "true").option("inferSchema", "true").csv("shipments_75000.csv")
+
+extra_df = spark.read.option("header", "true").option("inferSchema", "true").csv("shipments_extra_12000.csv")
+
+warehouse_df = spark.read.option("header", "true").option("inferSchema", "true").csv("warehouse_master.csv")
+
+carrier_df = spark.read.option("header", "true").option("inferSchema", "true").csv("carrier_master.csv")
+
+route_df = spark.read.option("header", "true").option("inferSchema", "true").csv("route_master.csv")
+
+sensor_df = spark.read.option("multiline", "true").json("warehouse_sensor_config.json")
+
+
+
+PART - A:
+---------
+
+1) shipments_df.printSchema()
+   print("Total Records:", shipments_df.count())
+   shipments_df.show(15, truncate=False)
+
+
+root
+ |-- shipment_id: string (nullable = true)
+ |-- booking_date: date (nullable = true)
+ |-- dispatch_date: date (nullable = true)
+ |-- promised_delivery_date: date (nullable = true)
+ |-- actual_delivery_date: date (nullable = true)
+ |-- warehouse_id: string (nullable = true)
+ |-- carrier_id: string (nullable = true)
+ |-- route_id: string (nullable = true)
+ |-- customer_segment: string (nullable = true)
+ |-- service_level: string (nullable = true)
+ |-- package_weight_kg: double (nullable = true)
+ |-- shipping_fee_inr: double (nullable = true)
+ |-- shipping_cost_inr: double (nullable = true)
+ |-- shipment_status: string (nullable = true)
+ |-- delivery_attempts: integer (nullable = true)
+ |-- damage_flag: string (nullable = true)
+ |-- customer_rating: double (nullable = true)
+ |-- handling_minutes: double (nullable = true)
+ |-- payment_mode: string (nullable = true)
+ |-- priority_flag: string (nullable = true)
+
+Total Records: 75000
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+|shipment_id|booking_date|dispatch_date|promised_delivery_date|actual_delivery_date|warehouse_id|carrier_id|route_id|customer_segment|service_level|package_weight_kg|shipping_fee_inr|shipping_cost_inr|shipment_status|delivery_attempts|damage_flag|customer_rating|handling_minutes|payment_mode    |priority_flag|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+|SHP0000001 |2026-05-24  |2026-05-24   |2026-05-26            |2026-05-27          |W08         |C04       |R07     |Retail          |Express      |3.93             |554.34          |324.9            |Delivered      |1                |No         |4.0            |122.0           |Prepaid         |No           |
+|SHP0000002 |2026-05-17  |2026-05-18   |2026-05-21            |2026-05-21          |W08         |C02       |R05     |Retail          |Standard     |5.62             |414.56          |351.6            |Delivered      |1                |No         |4.0            |220.0           |Prepaid         |No           |
+|SHP0000003 |2026-01-31  |2026-02-01   |2026-02-03            |2026-02-04          |W01         |C03       |R04     |SMB             |Express      |8.78             |724.64          |521.4            |Delivered      |3                |No         |NULL           |188.0           |Credit          |No           |
+|SHP0000004 |2026-03-12  |2026-03-12   |2026-03-17            |2026-03-18          |W03         |C03       |R06     |Retail          |Standard     |0.97             |287.86          |160.1            |Delivered      |2                |No         |3.0            |179.0           |Cash on Delivery|Yes          |
+|SHP0000005 |2026-08-16  |2026-08-16   |2026-08-25            |2026-08-29          |W03         |C05       |R06     |Retail          |Economy      |NULL             |251.68          |265.8            |Delivered      |1                |No         |5.0            |218.0           |Prepaid         |Yes          |
+|SHP0000006 |2026-02-06  |2026-02-08   |2026-02-09            |2026-02-09          |W01         |C07       |R03     |Retail          |Express      |6.05             |477.9           |499.5            |Delivered      |2                |No         |3.0            |48.0            |Cash on Delivery|No           |
+|SHP0000007 |2026-01-10  |2026-01-11   |2026-01-14            |NULL                |W02         |C03       |R02     |Retail          |Standard     |1.36             |298.68          |205.8            |In Transit     |1                |No         |NULL           |214.0           |Prepaid         |No           |
+|SHP0000008 |2026-03-06  |2026-03-06   |2026-03-16            |NULL                |W03         |C03       |R05     |Enterprise      |Economy      |2.04             |284.52          |210.2            |In Transit     |1                |No         |NULL           |76.0            |Prepaid         |No           |
+|SHP0000009 |2026-08-12  |2026-08-12   |2026-08-18            |2026-08-21          |W02         |C03       |R03     |Retail          |Standard     |18.73            |861.74          |712.9            |Delivered      |1                |No         |3.0            |222.0           |Prepaid         |No           |
+|SHP0000010 |2026-06-01  |2026-06-02   |2026-06-10            |2026-06-11          |W02         |C05       |R04     |SMB             |Economy      |2.02             |309.76          |149.6            |Delivered      |2                |No         |5.0            |98.0            |Prepaid         |No           |
+|SHP0000011 |2026-04-24  |2026-04-27   |2026-04-30            |2026-05-01          |W04         |C02       |R08     |SMB             |Standard     |6.87             |427.06          |305.1            |Delivered      |1                |No         |5.0            |208.0           |Prepaid         |Yes          |
+|SHP0000012 |2026-07-14  |2026-07-15   |2026-07-23            |NULL                |W02         |C01       |R02     |Retail          |Economy      |11.83            |668.54          |571.9            |In Transit     |2                |No         |NULL           |45.0            |Cash on Delivery|No           |
+|SHP0000013 |2026-06-26  |2026-06-26   |2026-06-29            |2026-06-29          |W01         |C05       |R03     |Retail          |Express      |3.73             |580.74          |349.9            |Delivered      |1                |No         |2.0            |67.0            |Prepaid         |No           |
+|SHP0000014 |2026-04-07  |2026-04-07   |2026-04-09            |2026-04-09          |W07         |C01       |R06     |Retail          |Express      |1.42             |447.96          |217.6            |Delivered      |1                |No         |5.0            |173.0           |Cash on Delivery|No           |
+|SHP0000015 |2026-02-27  |NULL         |2026-03-06            |NULL                |W07         |C01       |R07     |SMB             |Economy      |1.74             |164.12          |202.2            |Cancelled      |0                |No         |NULL           |230.0           |Prepaid         |Yes          |
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+only showing top 15 rows
+
+
+
+2) shipments_df.select("shipment_id", "warehouse_id", "service_level", "shipment_status", "shipping_fee_inr").show(5)
+
++-----------+------------+-------------+---------------+----------------+
+|shipment_id|warehouse_id|service_level|shipment_status|shipping_fee_inr|
++-----------+------------+-------------+---------------+----------------+
+| SHP0000001|         W08|      Express|      Delivered|          554.34|
+| SHP0000002|         W08|     Standard|      Delivered|          414.56|
+| SHP0000003|         W01|      Express|      Delivered|          724.64|
+| SHP0000004|         W03|     Standard|      Delivered|          287.86|
+| SHP0000005|         W03|      Economy|      Delivered|          251.68|
++-----------+------------+-------------+---------------+----------------+
+only showing top 5 rows
+
+
+3) shipments_df.filter((F.col("service_level") == "Express") & (F.col("package_weight_kg") > 5)).show(5)
+
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+|shipment_id|booking_date|dispatch_date|promised_delivery_date|actual_delivery_date|warehouse_id|carrier_id|route_id|customer_segment|service_level|package_weight_kg|shipping_fee_inr|shipping_cost_inr|shipment_status|delivery_attempts|damage_flag|customer_rating|handling_minutes|    payment_mode|priority_flag|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+| SHP0000003|  2026-01-31|   2026-02-01|            2026-02-03|          2026-02-04|         W01|       C03|     R04|             SMB|      Express|             8.78|          724.64|            521.4|      Delivered|                3|         No|           NULL|           188.0|          Credit|           No|
+| SHP0000006|  2026-02-06|   2026-02-08|            2026-02-09|          2026-02-09|         W01|       C07|     R03|          Retail|      Express|             6.05|           477.9|            499.5|      Delivered|                2|         No|            3.0|            48.0|Cash on Delivery|           No|
+| SHP0000016|  2026-06-23|   2026-06-26|            2026-06-28|          2026-06-27|         W07|       C07|     R05|             SMB|      Express|             6.87|          673.06|            369.1|      Delivered|                1|         No|            5.0|           139.0|          Credit|           No|
+| SHP0000059|  2026-07-29|   2026-08-01|            2026-08-04|          2026-08-03|         W06|       C07|     R01|      Enterprise|      Express|             7.92|          629.96|            489.6|      Delivered|                1|         No|            2.0|           104.0|         Prepaid|           No|
+| SHP0000098|  2026-06-16|   2026-06-18|            2026-06-21|                NULL|         W04|       C01|     R08|          Retail|      Express|             6.65|           671.7|            375.5|     In Transit|                1|         No|           NULL|           127.0|         Prepaid|           No|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+only showing top 5 rows
+
+
+4) shipments_df.orderBy(F.desc("shipping_fee_inr")).show(20)
+
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+|shipment_id|booking_date|dispatch_date|promised_delivery_date|actual_delivery_date|warehouse_id|carrier_id|route_id|customer_segment|service_level|package_weight_kg|shipping_fee_inr|shipping_cost_inr|shipment_status|delivery_attempts|damage_flag|customer_rating|handling_minutes|    payment_mode|priority_flag|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+| SHP0044904|  2026-08-11|   2026-08-13|            2026-08-16|                NULL|         W08|       C03|     R06|             SMB|     Standard|             42.0|          1862.0|           1330.0|     In Transit|                0|         No|           NULL|           198.0|         Prepaid|           No|
+| SHP0003419|  2026-01-28|   2026-01-31|            2026-02-05|          2026-02-05|         W03|       C02|     R06|          Retail|     Standard|             42.0|          1848.0|           1359.0|      Delivered|                1|         No|            5.0|           140.0|          Credit|          Yes|
+| SHP0018991|  2026-02-05|   2026-02-06|            2026-02-09|          2026-02-09|         W08|       C07|     R07|          Retail|     Standard|             42.0|          1840.0|           1444.0|      Delivered|                1|         No|            4.0|            30.0|         Prepaid|           No|
+| SHP0068592|  2026-05-07|   2026-05-07|            2026-05-13|          2026-05-13|         W07|       C01|     R06|          Retail|     Standard|             42.0|          1823.0|           1401.0|      Delivered|                1|         No|            3.0|           113.0|         Prepaid|           No|
+| SHP0056968|  2026-05-08|   2026-05-09|            2026-05-15|          2026-05-18|         W01|       C03|     R03|          Retail|     Standard|             42.0|          1793.0|           1372.0|      Delivered|                1|         No|            4.0|           235.0|Cash on Delivery|           No|
+| SHP0068570|  2026-04-12|   2026-04-12|            2026-04-17|                NULL|         W04|       C02|     R08|          Retail|     Standard|            40.96|         1780.48|           1328.8|     In Transit|                1|         No|           NULL|           173.0|         Prepaid|           No|
+| SHP0016717|  2026-04-26|   2026-04-27|            2026-05-03|                NULL|         W03|       C02|     R06|             SMB|     Standard|             42.0|          1773.0|           1475.0|     In Transit|                0|         No|           NULL|           210.0|         Prepaid|           No|
+| SHP0054211|  2026-08-22|   2026-08-22|            2026-08-24|          2026-08-24|         W02|       C06|     R04|          Retail|      Express|            37.34|         1758.92|           1331.2|      Delivered|                1|         No|           NULL|            NULL|         Prepaid|          Yes|
+| SHP0007455|  2026-01-02|   2026-01-02|            2026-01-03|          2026-01-03|         W04|       C04|     R12|          Retail|      Express|            39.17|         1749.46|           1461.1|      Delivered|                2|         No|            2.0|           108.0|         Prepaid|           No|
+| SHP0018333|  2026-05-10|   2026-05-10|            2026-05-16|          2026-05-14|         W04|       C05|     R09|          Retail|      Economy|             42.0|          1748.0|           1410.0|      Delivered|                1|         No|            5.0|           147.0|Cash on Delivery|           No|
+| SHP0009899|  2026-04-21|   2026-04-24|            2026-04-25|          2026-04-27|         W01|       C01|     R03|          Retail|      Express|            37.68|         1708.84|           1409.4|      Delivered|                1|         No|            4.0|           114.0|Cash on Delivery|           No|
+| SHP0008004|  2026-05-14|         NULL|            2026-05-20|                NULL|         W06|       C01|     R03|      Enterprise|      Economy|            39.54|         1705.52|           1299.2|      Cancelled|                0|         No|           NULL|           213.0|         Prepaid|           No|
+| SHP0012752|  2026-05-18|   2026-05-19|            2026-05-22|                NULL|         W02|       C03|     R04|      Enterprise|      Express|            35.64|         1705.32|           1380.2|     In Transit|                1|         No|           NULL|           145.0|Cash on Delivery|           No|
+| SHP0058191|  2026-03-29|   2026-03-31|            2026-04-10|          2026-04-11|         W01|       C01|     R01|             SMB|      Economy|             NULL|          1694.5|           1278.5|      Delivered|                1|         No|           NULL|            19.0|         Prepaid|           No|
+| SHP0059275|  2026-03-29|   2026-03-29|            2026-03-31|          2026-03-31|         W02|       C03|     R01|          Retail|      Express|            32.43|         1667.34|           1210.9|      Delivered|                1|         No|            5.0|           213.0|Cash on Delivery|           No|
+| SHP0021132|  2026-04-15|   2026-04-16|            2026-04-18|                NULL|         W03|       C03|     R06|          Retail|      Express|            32.59|         1652.42|           1266.7|     In Transit|                0|         No|           NULL|            NULL|         Prepaid|           No|
+| SHP0073699|  2026-05-11|   2026-05-12|            2026-05-18|          2026-05-18|         W01|       C02|     R03|          Retail|     Standard|            38.22|         1651.36|           1261.6|      Delivered|                3|         No|            3.0|           198.0|Cash on Delivery|           No|
+| SHP0031867|  2026-02-07|   2026-02-09|            2026-02-17|                NULL|         W03|       C03|     R05|          Retail|      Economy|            34.23|         1586.74|           1168.9|     In Transit|                0|         No|           NULL|           193.0|         Prepaid|          Yes|
+| SHP0070875|  2026-02-15|   2026-02-16|            2026-02-17|                NULL|         W02|       C07|     R02|          Retail|      Express|            30.87|         1586.06|           1249.1|     In Transit|                1|         No|           NULL|           174.0|Cash on Delivery|           No|
+| SHP0013058|  2026-03-05|   2026-03-07|            2026-03-08|          2026-03-09|         W05|       C03|     R10|          Retail|      Express|             30.2|          1585.6|           1091.0|      Delivered|                1|         No|            3.0|            48.0|         Prepaid|           No|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+only showing top 20 rows
+
+
+
+
+PART - B:
+---------
+
+
+5) shipments_df.groupBy("shipment_status").count().show()
+
++---------------+-----+
+|shipment_status|count|
++---------------+-----+
+|       Returned| 6130|
+|           Lost| 2241|
+|     In Transit|10472|
+|      Cancelled| 3723|
+|      Delivered|52434|
++---------------+-----+
+
+
+6) shipments_df.groupBy("service_level") \
+    .agg(
+        F.sum("shipping_fee_inr").alias("total_shipping_fee"),
+        F.sum(F.coalesce(F.col("shipping_cost_inr"), F.lit(0))).alias("total_shipping_cost"),
+        (
+            (F.sum("shipping_fee_inr") - F.sum(F.coalesce(F.col("shipping_cost_inr"), F.lit(0)))) / 
+            F.sum("shipping_fee_inr")
+        ).alias("profit_margin")
+    ).show()
+
++-------------+--------------------+--------------------+-------------------+
+|service_level|  total_shipping_fee| total_shipping_cost|      profit_margin|
++-------------+--------------------+--------------------+-------------------+
+|      Express|1.0058468059999986E7|   7350805.699999983|0.26919232072403737|
+|     Standard|1.3437372619999977E7|1.0110465900000025E7|0.24758610288504138|
+|      Economy|   4489918.680000002|   3386212.500000007|0.24581874609809062|
++-------------+--------------------+--------------------+-------------------+
+
+
+7) shipments_df.join(warehouse_df, "warehouse_id") \
+    .groupBy("region") \
+    .count() \
+    .show()
+
++------+-----+
+|region|count|
++------+-----+
+| South|33018|
+|  East| 5306|
+|  West|26909|
+| North| 9767|
++------+-----+
+
+
+8) shipments_df.filter(F.col("shipping_cost_inr").isNotNull()) \
+    .join(carrier_df, "carrier_id") \
+    .join(route_df, "route_id") \
+    .filter(F.col("distance_km") > 0) \
+    .withColumn("cost_per_km", F.col("shipping_cost_inr") / F.col("distance_km")) \
+    .groupBy("carrier_id", "carrier_name") \
+    .agg(F.avg("cost_per_km").alias("avg_cost_per_km")) \
+    .show()
+
++----------+--------------------+------------------+
+|carrier_id|        carrier_name|   avg_cost_per_km|
++----------+--------------------+------------------+
+|       C07|   BluePeak Delivery|0.6074832283099014|
+|       C04|  AirSprint Couriers|0.6125755103088726|
+|       C06|           RouteWise|0.5879324060720517|
+|       C03|MetroRoute Logistics| 0.594275960971091|
+|       C02|        ParcelBridge|0.5957409571811839|
+|       C05|           CargoNest|0.5897283901696387|
+|       C01|   SwiftLine Express|0.6032748764541479|
++----------+--------------------+------------------+
+
+
+
+
+PART - C:
+---------
+
+9) null_cols = ["carrier_id", "package_weight_kg", "shipping_cost_inr", "customer_rating"]
+
+   shipments_df.select([F.sum(F.col(c).isNull().cast("int")).alias(f"{c}_null_count") for c in null_cols]).show()
+
++---------------------+----------------------------+----------------------------+--------------------------+
+|carrier_id_null_count|package_weight_kg_null_count|shipping_cost_inr_null_count|customer_rating_null_count|
++---------------------+----------------------------+----------------------------+--------------------------+
+|                  871|                        1129|                        1503|                     26255|
++---------------------+----------------------------+----------------------------+--------------------------+
+
+
+
+10) shipments_filled_df = shipments_df.na.fill(0, subset=["handling_minutes"])
+
+    shipments_no_carrier_df = shipments_df.na.drop(subset=["carrier_id"])
+
+
+11) shipments_df.withColumn(
+    "weight_category",
+    F.when(F.col("package_weight_kg") < 2, "Light")
+     .when((F.col("package_weight_kg") >= 2) & (F.col("package_weight_kg") <= 10), "Medium")
+     .when(F.col("package_weight_kg") > 10, "Heavy")
+     .otherwise("Unknown")
+    ).select("shipment_id", "package_weight_kg", "weight_category").show(10)
+
++-----------+-----------------+---------------+
+|shipment_id|package_weight_kg|weight_category|
++-----------+-----------------+---------------+
+| SHP0000001|             3.93|         Medium|
+| SHP0000002|             5.62|         Medium|
+| SHP0000003|             8.78|         Medium|
+| SHP0000004|             0.97|          Light|
+| SHP0000005|             NULL|        Unknown|
+| SHP0000006|             6.05|         Medium|
+| SHP0000007|             1.36|          Light|
+| SHP0000008|             2.04|         Medium|
+| SHP0000009|            18.73|          Heavy|
+| SHP0000010|             2.02|         Medium|
++-----------+-----------------+---------------+
+only showing top 10 rows
+
+
+
+PART - D:
+---------
+
+12) shipments_dates_df = (
+    shipments_df
+    .withColumn("booking_date_dt", F.to_date("booking_date"))
+    .withColumn("actual_delivery_date_dt", F.to_date("actual_delivery_date"))
+    .withColumn("promised_delivery_date_dt", F.to_date("promised_delivery_date"))
+    .withColumn(
+        "delivery_duration_days",
+        F.datediff(F.col("actual_delivery_date_dt"), F.col("booking_date_dt"))
+      )
+    )
+    shipments_dates_df.filter(F.col("shipment_status") == "Delivered").select("shipment_id", "delivery_duration_days").show(5)
+
++-----------+----------------------+
+|shipment_id|delivery_duration_days|
++-----------+----------------------+
+| SHP0000001|                     3|
+| SHP0000002|                     4|
+| SHP0000003|                     4|
+| SHP0000004|                     6|
+| SHP0000005|                    13|
++-----------+----------------------+
+only showing top 5 rows
+
+
+
+13) shipments_perf_df = shipments_dates_df.withColumn(
+    "delivery_performance",
+    F.when(F.col("actual_delivery_date_dt").isNull(), "Missing Actual Date")
+     .when(F.col("actual_delivery_date_dt") < F.col("promised_delivery_date_dt"), "Early")
+     .when(F.col("actual_delivery_date_dt") == F.col("promised_delivery_date_dt"), "On Time")
+     .otherwise("Late")
+    )
+    shipments_perf_df.groupBy("delivery_performance").count().show()
+
++--------------------+-----+
+|delivery_performance|count|
++--------------------+-----+
+|             On Time|22049|
+| Missing Actual Date|22566|
+|                Late|21900|
+|               Early| 8485|
++--------------------+-----+
+
+
+
+14) shipments_df.filter(F.col("shipment_status") == "Delivered") \
+    .withColumn("month", F.date_format(F.to_date("booking_date"), "yyyy-MM")) \
+    .groupBy("month") \
+    .agg(
+        F.count("shipment_id").alias("delivered_count"),
+        F.sum("shipping_fee_inr").alias("total_shipping_fee")
+    ).orderBy("month") \
+    .show()
+
++-------+---------------+------------------+
+|  month|delivered_count|total_shipping_fee|
++-------+---------------+------------------+
+|2026-01|           6710| 2525138.440000005|
+|2026-02|           6097|2268113.5000000037|
+|2026-03|           6810|2530456.2400000026|
+|2026-04|           6379|2389163.4600000014|
+|2026-05|           6858|2549683.9999999963|
+|2026-06|           6615|2447590.1200000006|
+|2026-07|           6773|2512355.2199999997|
+|2026-08|           6192|2306432.5199999996|
++-------+---------------+------------------+
+
+
+
+
+PART - E:
+---------
+
+15) carrier_fees_df = (
+      shipments_df
+        .join(warehouse_df, "warehouse_id")
+        .groupBy("region", "carrier_id")
+        .agg(F.sum("shipping_fee_inr").alias("total_fee"))
+    )
+    window_region = Window.partitionBy("region").orderBy(F.desc("total_fee"))
+    carrier_fees_df.withColumn("rank", F.dense_rank().over(window_region)).show()
+
++------+----------+------------------+----+
+|region|carrier_id|         total_fee|rank|
++------+----------+------------------+----+
+|  East|       C01|393862.61999999994|   1|
+|  East|       C02|         373590.02|   2|
+|  East|       C03|302260.92000000004|   3|
+|  East|       C05|243322.91999999998|   4|
+|  East|       C07|222025.85999999993|   5|
+|  East|       C04|211583.64000000004|   6|
+|  East|       C06| 195810.3399999999|   7|
+|  East|      NULL|           24594.6|   8|
+| North|       C02| 731442.0999999994|   1|
+| North|       C01| 653223.6200000005|   2|
+| North|       C03| 597883.4600000005|   3|
+| North|       C05|464601.85999999975|   4|
+| North|       C07|425396.69999999995|   5|
+| North|       C04|393181.07999999984|   6|
+| North|       C06|338296.45999999985|   7|
+| North|      NULL|45235.700000000004|   8|
+| South|       C02|2442652.5400000014|   1|
+| South|       C01| 2271284.540000001|   2|
+| South|       C03|1929008.1199999978|   3|
+| South|       C07|1519441.4999999995|   4|
++------+----------+------------------+----+
+only showing top 20 rows
+
+
+
+16) window_warehouse = Window.partitionBy("warehouse_id").orderBy(F.desc("booking_date"))
+
+    shipments_df.withColumn("rn", F.row_number().over(window_warehouse)) \
+      .filter(F.col("rn") == 1) \
+      .select("warehouse_id", "shipment_id", "booking_date") \
+      .show()
+
++------------+-----------+------------+
+|warehouse_id|shipment_id|booking_date|
++------------+-----------+------------+
+|         W01| SHP0000944|  2026-08-28|
+|         W02| SHP0000467|  2026-08-28|
+|         W03| SHP0006120|  2026-08-28|
+|         W04| SHP0000924|  2026-08-28|
+|         W05| SHP0000717|  2026-08-28|
+|         W06| SHP0000410|  2026-08-28|
+|         W07| SHP0000292|  2026-08-28|
+|         W08| SHP0001994|  2026-08-28|
++------------+-----------+------------+
+
+
+17) window_running = Window.partitionBy("warehouse_id").orderBy("booking_date", "shipment_id")
+
+    shipments_df.withColumn(
+      "running_total_fees",
+      F.sum("shipping_fee_inr").over(window_running)
+    ).select("warehouse_id", "booking_date", "shipment_id", "shipping_fee_inr", "running_total_fees").show(5)
+
++------------+------------+-----------+----------------+------------------+
+|warehouse_id|booking_date|shipment_id|shipping_fee_inr|running_total_fees|
++------------+------------+-----------+----------------+------------------+
+|         W01|  2026-01-01| SHP0004062|          312.48|            312.48|
+|         W01|  2026-01-01| SHP0006739|          227.02|             539.5|
+|         W01|  2026-01-01| SHP0007553|          316.02|            855.52|
+|         W01|  2026-01-01| SHP0008505|          572.68|1428.1999999999998|
+|         W01|  2026-01-01| SHP0009674|           322.9|            1751.1|
++------------+------------+-----------+----------------+------------------+
+only showing top 5 rows
+
+
+
+
+PART - F:
+---------
+
+18) combined_shipments_df = shipments_df.unionByName(extra_df)
+    print("Combined Records Count:", combined_shipments_df.count())
+
+Combined Records Count: 87000
+
+
+19) initial_count = combined_shipments_df.count()
+    deduped_df = combined_shipments_df.dropDuplicates(["shipment_id"])
+    deduped_count = deduped_df.count()
+    print(f"Before dedup: {initial_count}, After dedup: {deduped_count}, Duplicates removed: {initial_count - deduped_count}")
+
+Before dedup: 87000, After dedup: 86250, Duplicates removed: 750
+
+
+20) exploded_sensor_df = sensor_df.select(
+      col("warehouse_id"),
+      col("environment.*"),
+      explode(col("sensors")).alias("sensor_detail")
+    )
+
+    exploded_sensor_df.show(5, truncate=False)
+
++------------+-------------------+-------------------+----------------------------+
+|warehouse_id|humidity_target_pct|temperature_range_c|sensor_detail               |
++------------+-------------------+-------------------+----------------------------+
+|W01         |45                 |{32, 18}           |{false, W01-S1, Temperature}|
+|W01         |45                 |{32, 18}           |{true, W01-S2, Humidity}    |
+|W01         |45                 |{32, 18}           |{true, W01-S3, Door}        |
+|W02         |50                 |{32, 18}           |{true, W02-S1, Temperature} |
+|W02         |50                 |{32, 18}           |{true, W02-S2, Humidity}    |
++------------+-------------------+-------------------+----------------------------+
+only showing top 5 rows
+
+
+
+
+PART - G:
+---------
+
+21) pipeline_plan_df = (
+      shipments_df
+        .filter(F.col("service_level") == "Express")
+        .join(warehouse_df, "warehouse_id")
+        .withColumn("revenue_diff", F.col("shipping_fee_inr") - F.coalesce(F.col("shipping_cost_inr"), F.lit(0)))
+        .groupBy("region", "service_level")
+        .agg(F.sum("revenue_diff").alias("total_net_revenue"))
+        .orderBy(F.desc("total_net_revenue"))
+    )
+    pipeline_plan_df.explain(True)
+    pipeline_plan_df.show()
+
++------+-------------+------------------+
+|region|service_level| total_net_revenue|
++------+-------------+------------------+
+| South|      Express|1197391.9400000013|
+|  West|      Express| 970434.4999999998|
+| North|      Express|344437.92000000016|
+|  East|      Express|195398.00000000017|
++------+-------------+------------------+
+
+
+
+22) delivered_df = shipments_df.filter(F.col("shipment_status") == "Delivered").cache()
+
+    start_t1 = time.time()
+    print("Delivered Count 1:", delivered_df.count())
+    print(f"Time 1: {time.time() - start_t1:.4f}s")
+
+    start_t2 = time.time()
+    print("Delivered Count 2:", delivered_df.count())
+    print(f"Time 2 (cached): {time.time() - start_t2:.4f}s")
+
+
+Delivered Count 1: 52434
+Time 1: 2.6254s
+Delivered Count 2: 52434
+Time 2 (cached): 0.1518s
+
+
+
+23) express_df = shipments_df.filter(F.col("service_level") == "Express").persist(StorageLevel.MEMORY_AND_DISK)
+    print("Express Count:", express_df.count())
+    print("Express First Row:", express_df.first())
+    print("Storage Level:", express_df.storageLevel)
+    express_df.unpersist().show(5)
+
+
+Express Count: 21090
+Express First Row: Row(shipment_id='SHP0000001', booking_date=datetime.date(2026, 5, 24), dispatch_date=datetime.date(2026, 5, 24), promised_delivery_date=datetime.date(2026, 5, 26), actual_delivery_date=datetime.date(2026, 5, 27), warehouse_id='W08', carrier_id='C04', route_id='R07', customer_segment='Retail', service_level='Express', package_weight_kg=3.93, shipping_fee_inr=554.34, shipping_cost_inr=324.9, shipment_status='Delivered', delivery_attempts=1, damage_flag='No', customer_rating=4.0, handling_minutes=122.0, payment_mode='Prepaid', priority_flag='No')
+Storage Level: Disk Memory Serialized 1x Replicated
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+|shipment_id|booking_date|dispatch_date|promised_delivery_date|actual_delivery_date|warehouse_id|carrier_id|route_id|customer_segment|service_level|package_weight_kg|shipping_fee_inr|shipping_cost_inr|shipment_status|delivery_attempts|damage_flag|customer_rating|handling_minutes|    payment_mode|priority_flag|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+| SHP0000001|  2026-05-24|   2026-05-24|            2026-05-26|          2026-05-27|         W08|       C04|     R07|          Retail|      Express|             3.93|          554.34|            324.9|      Delivered|                1|         No|            4.0|           122.0|         Prepaid|           No|
+| SHP0000003|  2026-01-31|   2026-02-01|            2026-02-03|          2026-02-04|         W01|       C03|     R04|             SMB|      Express|             8.78|          724.64|            521.4|      Delivered|                3|         No|           NULL|           188.0|          Credit|           No|
+| SHP0000006|  2026-02-06|   2026-02-08|            2026-02-09|          2026-02-09|         W01|       C07|     R03|          Retail|      Express|             6.05|           477.9|            499.5|      Delivered|                2|         No|            3.0|            48.0|Cash on Delivery|           No|
+| SHP0000013|  2026-06-26|   2026-06-26|            2026-06-29|          2026-06-29|         W01|       C05|     R03|          Retail|      Express|             3.73|          580.74|            349.9|      Delivered|                1|         No|            2.0|            67.0|         Prepaid|           No|
+| SHP0000014|  2026-04-07|   2026-04-07|            2026-04-09|          2026-04-09|         W07|       C01|     R06|          Retail|      Express|             1.42|          447.96|            217.6|      Delivered|                1|         No|            5.0|           173.0|Cash on Delivery|           No|
++-----------+------------+-------------+----------------------+--------------------+------------+----------+--------+----------------+-------------+-----------------+----------------+-----------------+---------------+-----------------+-----------+---------------+----------------+----------------+-------------+
+only showing top 5 rows
+
+
+
+PART - G:
+---------
+
+24) repart_8_df = shipments_df.repartition(8)
+    (
+      repart_8_df
+      .groupBy(F.spark_partition_id().alias("partition_id"))
+      .count()
+      .orderBy("partition_id")
+      .show()
+    )
+
++------------+-----+
+|partition_id|count|
++------------+-----+
+|           0| 9375|
+|           1| 9374|
+|           2| 9376|
+|           3| 9375|
+|           4| 9375|
+|           5| 9375|
+|           6| 9375|
+|           7| 9375|
++------------+-----+
+
+
+
+25) df_12 = shipments_df.repartition(12)
+    df_coalesced = df_12.coalesce(3)
+    df_repart_3 = df_12.repartition(3)
+
+    print("Coalesce(3) Execution Plan")
+    df_coalesced.explain(True)
+
+    print("Repartition(3) Execution Plan")
+    df_repart_3.explain(True)
+
+
+26) shipments_df.join(warehouse_df, "warehouse_id") \
+        .repartition(4) \
+        .write.mode("overwrite") \
+        .parquet("shipments_warehouse_parquet")
+
+
+
+
+FINAL CHALLENGE:
+----- ----------
+
+
+cleaned_shipments_df = (
+    shipments_df
+    .na.fill(0, subset=["shipping_cost_inr", "package_weight_kg"])
+)
+
+
+processed_pipeline_df = (
+    cleaned_shipments_df
+    .withColumn("booking_dt", F.to_date("booking_date"))
+    .withColumn("actual_dt", F.to_date("actual_delivery_date"))
+    .withColumn("promised_dt", F.to_date("promised_delivery_date"))
+    .withColumn(
+        "delivery_duration_days",
+        F.datediff(F.col("actual_dt"), F.col("booking_dt"))
+    )
+    .withColumn(
+        "is_late",
+        F.when(F.col("actual_dt") > F.col("promised_dt"), 1).otherwise(0)
+    )
+    .withColumn(
+        "is_on_time",
+        F.when((F.col("actual_dt").isNotNull()) & (F.col("actual_dt") <= F.col("promised_dt")), 1).otherwise(0)
+    )
+    .withColumn(
+        "shipment_profit",
+        F.col("shipping_fee_inr") - F.col("shipping_cost_inr")
+    )
+    .join(warehouse_df, "warehouse_id")
+    .join(carrier_df, "carrier_id")
+)
+
+aggregated_pipeline_df = (
+    processed_pipeline_df
+    .groupBy("region", "carrier_id", "carrier_name")
+    .agg(
+        F.sum("shipping_fee_inr").alias("total_revenue"),
+        F.sum("shipment_profit").alias("total_profit"),
+        F.count("shipment_id").alias("total_shipments"),
+        (F.sum("is_late") / F.count("shipment_id") * 100).alias("late_delivery_percentage"),
+        (F.sum("is_on_time") / F.count("shipment_id") * 100).alias("on_time_delivery_percentage")
+    )
+)
+
+window_ranking = Window.partitionBy("region").orderBy(F.desc("on_time_delivery_percentage"))
+ranked_pipeline_df = aggregated_pipeline_df.withColumn(
+    "carrier_rank_by_ontime",
+    F.dense_rank().over(window_ranking)
+)
+
+
+ranked_pipeline_df.cache()
+print("Final Report Record Count:", ranked_pipeline_df.count())
+ranked_pipeline_df.show(10, truncate=False)
+
+
+
+Final Report Record Count: 28
++------+----------+--------------------+------------------+-----------------+---------------+------------------------+---------------------------+----------------------+
+|region|carrier_id|carrier_name        |total_revenue     |total_profit     |total_shipments|late_delivery_percentage|on_time_delivery_percentage|carrier_rank_by_ontime|
++------+----------+--------------------+------------------+-----------------+---------------+------------------------+---------------------------+----------------------+
+|South |C05       |CargoNest           |1437480.9200000009|364710.4200000005|3838           |28.243877019280877      |43.14747264200104          |1                     |
+|South |C03       |MetroRoute Logistics|1929008.1199999978|494540.6199999999|5197           |29.70944775832211       |41.5047142582259           |2                     |
+|South |C06       |RouteWise           |1233214.2399999998|316221.74        |3328           |29.657451923076923      |41.25600961538461          |3                     |
+|South |C01       |SwiftLine Express   |2271284.540000001 |574166.9399999983|6075           |28.378600823045268      |40.8724279835391           |4                     |
+|South |C02       |ParcelBridge        |2442652.5400000014|633253.4399999988|6564           |29.58561852528946       |40.82876294942108          |5                     |
+|South |C04       |AirSprint Couriers  |1366979.28        |350509.3799999998|3602           |27.84564131038312       |40.782898389783455         |6                     |
+|South |C07       |BluePeak Delivery   |1519441.4999999995|383673.3000000003|4042           |30.62840178129639       |40.25235032162296          |7                     |
+|East  |C01       |SwiftLine Express   |393862.61999999994|101172.6200000001|1037           |27.000964320154292      |43.29797492767599          |1                     |
+|East  |C05       |CargoNest           |243322.91999999998|65204.91999999997|661            |29.652042360060516      |40.998487140695914         |2                     |
+|East  |C07       |BluePeak Delivery   |222025.85999999993|53262.06         |613            |29.03752039151713       |39.8042414355628           |3                     |
++------+----------+--------------------+------------------+-----------------+---------------+------------------------+---------------------------+----------------------+
+only showing top 10 rows
+
+
+ranked_pipeline_df.repartition("region") \
+    .write.mode("overwrite") \
+    .partitionBy("region") \
+    .parquet("logistics_performance_report_parquet")
