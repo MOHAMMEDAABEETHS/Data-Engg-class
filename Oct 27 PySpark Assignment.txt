@@ -1,0 +1,736 @@
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark import StorageLevel
+
+import time
+
+spark = SparkSession.builder \
+    .appName("PySparkPractice") \
+    .getOrCreate()
+
+
+
+
+products_data = [
+    ("P01", "Laptop", "Electronics", 60000),
+    ("P02", "Monitor", "Electronics", 14000),
+    ("P03", "Headphones", "Accessories", 3500),
+    ("P04", "Printer", "Office", 17000),
+    ("P05", "Router", "Networking", 4500),
+    ("P06", "Tablet", "Electronics", 24000)
+]
+
+products_df = spark.createDataFrame(
+    products_data,
+    ["product_id", "product_name", "category", "list_price"]
+)
+
+
+stores_data = [
+    ("S01", "Hyderabad", "South"),
+    ("S02", "Bengaluru", "South"),
+    ("S03", "Mumbai", "West"),
+    ("S04", "Delhi", "North")
+]
+
+stores_df = spark.createDataFrame(
+    stores_data,
+    ["store_id", "city", "region"]
+)
+
+
+
+products_df.show()
+
++----------+------------+-----------+----------+
+|product_id|product_name|   category|list_price|
++----------+------------+-----------+----------+
+|       P01|      Laptop|Electronics|     60000|
+|       P02|     Monitor|Electronics|     14000|
+|       P03|  Headphones|Accessories|      3500|
+|       P04|     Printer|     Office|     17000|
+|       P05|      Router| Networking|      4500|
+|       P06|      Tablet|Electronics|     24000|
++----------+------------+-----------+----------+
+
+
+
+stores_df.show()
+
++--------+---------+------+
+|store_id|     city|region|
++--------+---------+------+
+|     S01|Hyderabad| South|
+|     S02|Bengaluru| South|
+|     S03|   Mumbai|  West|
+|     S04|    Delhi| North|
++--------+---------+------+
+
+
+
+
+
+#########   sales_base_df = (			Can be replaced in the sales_df definition
+    spark.range(1, 100001)
+    .withColumnRenamed("id", "order_id")
+    .withColumn(
+        "order_date",
+        F.date_add(
+            F.to_date(F.lit("2026-01-01")),
+            (F.col("order_id") % 180).cast("int"),
+        ),
+    )
+    .withColumn(
+        "product_id",
+        F.concat(
+            F.lit("P"),
+            F.lpad(((F.col("order_id") % 6) + 1).cast("string"), 2, "0"),
+        ),
+    )
+    .withColumn(
+        "store_id",
+        F.concat(
+            F.lit("S"),
+            F.lpad(
+                ((F.floor(F.col("order_id") / 3) % 4) + 1).cast("string"),
+                2,
+                "0",
+            ),
+        ),
+    )
+    .withColumn("quantity", ((F.col("order_id") % 8) + 1).cast("int"))
+    .withColumn(
+        "discount_pct",
+        F.when(F.col("order_id") % 19 == 0, F.lit(None).cast("int")).otherwise(
+            ((F.floor(F.col("order_id") / 5) % 4) * 5).cast("int")
+        ),
+    )
+)   #########
+
+
+
+
+
+sales_df = (
+    spark.range(1, 100001)
+    .withColumnRenamed("id", "order_id")
+    .withColumn(
+        "order_date",
+        F.date_add(
+            F.to_date(F.lit("2026-01-01")),
+            (F.col("order_id") % 180).cast("int")
+        )
+    )
+    .withColumn(
+        "product_id",
+        F.concat(
+            F.lit("P"),
+            F.lpad(
+                ((F.col("order_id") % 6) + 1).cast("string"),
+                2, "0"
+            )
+        )
+    )
+    .withColumn(
+        "store_id",
+        F.concat(
+            F.lit("S"),
+            F.lpad(
+                ((F.floor(F.col("order_id") / 3) % 4) + 1)
+                .cast("string"),
+                2, "0"
+            )
+        )
+    )
+    .withColumn(
+        "quantity",
+        ((F.col("order_id") % 8) + 1).cast("int")
+    )
+    .withColumn(
+        "discount_pct",
+        F.when(
+            F.col("order_id") % 19 == 0,
+            F.lit(None).cast("int")
+        ).otherwise(
+            ((F.floor(F.col("order_id") / 5) % 4) * 5)
+            .cast("int")
+        )
+    )
+    .withColumn(
+        "order_status",
+        F.when(F.col("order_id") % 11 == 0, "Cancelled")
+         .when(F.col("order_id") % 7 == 0, "Returned")
+         .otherwise("Completed")
+    )
+
+    .withColumn(
+        "payment_method",
+        F.when(F.col("order_id") % 3 == 0, "UPI")
+         .when(F.col("order_id") % 3 == 1, "Card")
+         .otherwise("Cash")
+    )
+
+    .withColumn(
+        "salesperson_id",
+        F.when(
+            F.col("order_id") % 17 == 0,
+            F.lit(None).cast("string")
+        ).otherwise(
+            F.concat(
+                F.lit("EMP"),
+                F.lpad(
+                    ((F.col("order_id") % 12) + 1).cast("string"),
+                    2, "0"
+                )
+            )
+        )
+    )
+
+    .join(
+        products_df.select(
+            "product_id",
+            F.col("list_price").alias("unit_price")
+        ),
+        "product_id",
+        "left"
+    )
+
+    .select(
+        "order_id", "order_date", "store_id",
+        "product_id", "quantity", "unit_price",
+        "discount_pct", "order_status",
+        "payment_method", "salesperson_id"
+    )
+)
+
+
+
+print("Total Records:", sales_df.count())
+
+Total Records: 100000
+
+
+
+sales_df.printSchema()
+
+root
+ |-- order_id: long (nullable = false)
+ |-- order_date: date (nullable = true)
+ |-- store_id: string (nullable = true)
+ |-- product_id: string (nullable = true)
+ |-- quantity: integer (nullable = true)
+ |-- unit_price: long (nullable = true)
+ |-- discount_pct: integer (nullable = true)
+ |-- order_status: string (nullable = false)
+ |-- payment_method: string (nullable = false)
+ |-- salesperson_id: string (nullable = true)
+
+
+
+sales_df.show(10, truncate=False)
+
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|3       |2026-01-04|S02     |P04       |4       |17000     |0           |Completed   |UPI           |EMP04         |
+|9       |2026-01-10|S04     |P04       |2       |17000     |5           |Completed   |UPI           |EMP10         |
+|2       |2026-01-03|S01     |P03       |3       |3500      |0           |Completed   |Cash          |EMP03         |
+|8       |2026-01-09|S03     |P03       |1       |3500      |5           |Completed   |Cash          |EMP09         |
+|4       |2026-01-05|S02     |P05       |5       |4500      |0           |Completed   |Card          |EMP05         |
+|10      |2026-01-11|S04     |P05       |3       |4500      |10          |Completed   |Card          |EMP11         |
+|5       |2026-01-06|S02     |P06       |6       |24000     |5           |Completed   |Cash          |EMP06         |
+|11      |2026-01-12|S04     |P06       |4       |24000     |10          |Cancelled   |Cash          |EMP12         |
+|1       |2026-01-02|S01     |P02       |2       |14000     |0           |Completed   |Card          |EMP02         |
+|7       |2026-01-08|S03     |P02       |8       |14000     |5           |Returned    |Card          |EMP08         |
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+only showing top 10 rows
+
+
+
+
+
+PART - A:
+---------
+
+1) sales_df.select("order_id", "product_id", "quantity", "unit_price").show(5)
+
++--------+----------+--------+----------+
+|order_id|product_id|quantity|unit_price|
++--------+----------+--------+----------+
+|       3|       P04|       4|     17000|
+|       2|       P03|       3|      3500|
+|       4|       P05|       5|      4500|
+|       5|       P06|       6|     24000|
+|       1|       P02|       2|     14000|
++--------+----------+--------+----------+
+only showing top 5 rows
+
+
+2) sales_df.filter((F.col("order_status") == "Completed") & (F.col("quantity") > 5)).show(5)
+
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|      15|2026-01-16|     S02|       P04|       8|     17000|          15|   Completed|           UPI|         EMP04|
+|       5|2026-01-06|     S02|       P06|       6|     24000|           5|   Completed|          Cash|         EMP06|
+|      23|2026-01-24|     S04|       P06|       8|     24000|           0|   Completed|          Cash|         EMP12|
+|      29|2026-01-30|     S02|       P06|       6|     24000|           5|   Completed|          Cash|         EMP06|
+|      13|2026-01-14|     S01|       P02|       6|     14000|          10|   Completed|          Card|         EMP02|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+only showing top 5 rows
+
+
+3) sales_df.withColumn("gross_revenue", F.col("quantity") * F.col("unit_price")).show(5)
+
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+-------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|gross_revenue|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+-------------+
+|       3|2026-01-04|     S02|       P04|       4|     17000|           0|   Completed|           UPI|         EMP04|        68000|
+|       2|2026-01-03|     S01|       P03|       3|      3500|           0|   Completed|          Cash|         EMP03|        10500|
+|       4|2026-01-05|     S02|       P05|       5|      4500|           0|   Completed|          Card|         EMP05|        22500|
+|       5|2026-01-06|     S02|       P06|       6|     24000|           5|   Completed|          Cash|         EMP06|       144000|
+|       1|2026-01-02|     S01|       P02|       2|     14000|           0|   Completed|          Card|         EMP02|        28000|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+-------------+
+only showing top 5 rows
+
+
+4) sales_df.withColumnRenamed("order_status", "transaction_status").drop("payment_method").show(5)
+
++--------+----------+--------+----------+--------+----------+------------+------------------+--------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|transaction_status|salesperson_id|
++--------+----------+--------+----------+--------+----------+------------+------------------+--------------+
+|       3|2026-01-04|     S02|       P04|       4|     17000|           0|         Completed|         EMP04|
+|       2|2026-01-03|     S01|       P03|       3|      3500|           0|         Completed|         EMP03|
+|       4|2026-01-05|     S02|       P05|       5|      4500|           0|         Completed|         EMP05|
+|       5|2026-01-06|     S02|       P06|       6|     24000|           5|         Completed|         EMP06|
+|       1|2026-01-02|     S01|       P02|       2|     14000|           0|         Completed|         EMP02|
++--------+----------+--------+----------+--------+----------+------------+------------------+--------------+
+only showing top 5 rows
+
+
+
+
+PART - B:
+---------
+
+
+5) sales_df.groupBy("product_id").agg(F.sum("quantity").alias("total_quantity")).show()
+
++----------+--------------+
+|product_id|total_quantity|
++----------+--------------+
+|       P04|         83334|
+|       P03|         66667|
+|       P05|         66665|
+|       P06|         83330|
+|       P02|         83336|
+|       P01|         66668|
++----------+--------------+
+
+
+
+6) sales_df.join(products_df, "product_id").withColumn("gross_revenue", F.col("quantity") * F.col("unit_price")) \
+    .groupBy("category") \
+    .agg(F.sum("gross_revenue").alias("total_gross_revenue")) \
+    .show()
+
++-----------+-------------------+
+|   category|total_gross_revenue|
++-----------+-------------------+
+|     Office|         1416678000|
+| Networking|          299992500|
+|Electronics|         7166704000|
+|Accessories|          233334500|
++-----------+-------------------+
+
+
+
+7) sales_df.join(stores_df, "store_id").groupBy("city") \
+    .agg(F.count("order_id").alias("total_transactions")) \
+    .show()
+
++---------+------------------+
+|     city|total_transactions|
++---------+------------------+
+|   Mumbai|             24999|
+|    Delhi|             24999|
+|Bengaluru|             25001|
+|Hyderabad|             25001|
++---------+------------------+
+
+
+
+
+8) sales_df.filter(F.col("order_status") == "Completed").join(products_df, "product_id") \
+    .withColumn("gross_revenue", F.col("quantity") * F.col("unit_price")) \
+    .groupBy("product_id", "product_name") \
+    .agg(F.sum("gross_revenue").alias("total_gross_revenue")) \
+    .orderBy(F.desc("total_gross_revenue")) \
+    .limit(5) \
+    .show()
+
+
++----------+------------+-------------------+
+|product_id|product_name|total_gross_revenue|
++----------+------------+-------------------+
+|       P01|      Laptop|         3116940000|
+|       P06|      Tablet|         1558416000|
+|       P04|     Printer|         1103912000|
+|       P02|     Monitor|          909076000|
+|       P05|      Router|          233766000|
++----------+------------+-------------------+
+
+
+
+
+PART - C:
+---------
+
+
+9) sales_df.select(
+    [F.sum(F.col(c).isNull().cast("int")).alias(f"{c}_null_count") for c in ["discount_pct", "salesperson_id"]]
+   ).show()
+
++-----------------------+-------------------------+
+|discount_pct_null_count|salesperson_id_null_count|
++-----------------------+-------------------------+
+|                   5263|                     5882|
++-----------------------+-------------------------+
+
+
+
+10) sales_df.na.fill(0, subset=["discount_pct"]).show(5)
+
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|       3|2026-01-04|     S02|       P04|       4|     17000|           0|   Completed|           UPI|         EMP04|
+|       2|2026-01-03|     S01|       P03|       3|      3500|           0|   Completed|          Cash|         EMP03|
+|       4|2026-01-05|     S02|       P05|       5|      4500|           0|   Completed|          Card|         EMP05|
+|       5|2026-01-06|     S02|       P06|       6|     24000|           5|   Completed|          Cash|         EMP06|
+|       1|2026-01-02|     S01|       P02|       2|     14000|           0|   Completed|          Card|         EMP02|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+only showing top 5 rows
+
+
+
+11) sales_df.na.drop(subset=["salesperson_id"]).show(5)
+
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|       3|2026-01-04|     S02|       P04|       4|     17000|           0|   Completed|           UPI|         EMP04|
+|       2|2026-01-03|     S01|       P03|       3|      3500|           0|   Completed|          Cash|         EMP03|
+|       4|2026-01-05|     S02|       P05|       5|      4500|           0|   Completed|          Card|         EMP05|
+|       5|2026-01-06|     S02|       P06|       6|     24000|           5|   Completed|          Cash|         EMP06|
+|       1|2026-01-02|     S01|       P02|       2|     14000|           0|   Completed|          Card|         EMP02|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+only showing top 5 rows
+
+
+
+12) sales_df.withColumn(
+      "order_size",
+      F.when(F.col("quantity").between(1, 3), "Small")
+      .when(F.col("quantity").between(4, 6), "Medium")
+      .otherwise("Large")
+    ).select("order_id", "quantity", "order_size").show(5)
+
+
++--------+--------+----------+
+|order_id|quantity|order_size|
++--------+--------+----------+
+|       3|       4|    Medium|
+|       2|       3|     Small|
+|       4|       5|    Medium|
+|       5|       6|    Medium|
+|       1|       2|     Small|
++--------+--------+----------+
+only showing top 5 rows
+
+
+
+
+PART - D:
+---------
+
+
+13) product_revenue = (
+      sales_df.join(products_df, "product_id")
+      .withColumn("gross_revenue", F.col("quantity") * F.col("unit_price"))
+      .groupBy("category", "product_id", "product_name")
+      .agg(F.sum("gross_revenue").alias("total_gross_revenue"))
+    )
+
+    window_spec_1 = Window.partitionBy("category").orderBy(F.desc("total_gross_revenue"))
+
+    product_revenue.withColumn("rank", F.dense_rank().over(window_spec_1)).show()
+
+
++-----------+----------+------------+-------------------+----+
+|   category|product_id|product_name|total_gross_revenue|rank|
++-----------+----------+------------+-------------------+----+
+|Accessories|       P03|  Headphones|          233334500|   1|
+|Electronics|       P01|      Laptop|         4000080000|   1|
+|Electronics|       P06|      Tablet|         1999920000|   2|
+|Electronics|       P02|     Monitor|         1166704000|   3|
+| Networking|       P05|      Router|          299992500|   1|
+|     Office|       P04|     Printer|         1416678000|   1|
++-----------+----------+------------+-------------------+----+
+
+
+
+14) revenue_df = sales_df.withColumn("gross_revenue", F.col("quantity") * F.col("unit_price"))
+
+    window_spec_2 = Window.partitionBy("store_id").orderBy("order_date", "order_id")
+
+    revenue_df.withColumn("running_revenue", F.sum("gross_revenue").over(window_spec_2)).show(5)
+
+
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+-------------+---------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|gross_revenue|running_revenue|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+-------------+---------------+
+|     180|2026-01-01|     S01|       P01|       5|     60000|           0|   Completed|           UPI|         EMP01|       300000|         300000|
+|     360|2026-01-01|     S01|       P01|       1|     60000|           0|   Completed|           UPI|         EMP01|        60000|         360000|
+|     540|2026-01-01|     S01|       P01|       5|     60000|           0|   Completed|           UPI|         EMP01|       300000|         660000|
+|     720|2026-01-01|     S01|       P01|       1|     60000|           0|   Completed|           UPI|         EMP01|        60000|         720000|
+|     900|2026-01-01|     S01|       P01|       5|     60000|           0|   Completed|           UPI|         EMP01|       300000|        1020000|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+-------------+---------------+
+only showing top 5 rows
+
+
+
+15) sales_df.filter(F.col("order_status") == "Completed").withColumn("month", F.date_format("order_date", "yyyy-MM")) \
+    .withColumn("gross_revenue", F.col("quantity") * F.col("unit_price")) \
+    .groupBy("month") \
+    .agg(F.sum("gross_revenue").alias("monthly_revenue")) \
+    .orderBy("month") \
+    .show()
+
++-------+---------------+
+|  month|monthly_revenue|
++-------+---------------+
+|2026-01|     1278728500|
+|2026-02|     1027585500|
+|2026-03|     1212087500|
+|2026-04|     1218921000|
+|2026-05|     1277560500|
+|2026-06|     1089027500|
++-------+---------------+
+
+
+
+
+PART - E:
+---------
+
+
+16) df1 = sales_df.filter(F.col("quantity") > 3)
+    print("Transformation 1 applied: filter")
+
+    df2 = df1.withColumn("gross_revenue", F.col("quantity") * F.col("unit_price"))
+    print("Transformation 2 applied: withColumn")
+
+    df3 = df2.select("order_id", "product_id", "gross_revenue")
+    print("Transformation 3 applied: select")
+
+    df3.show(5)
+
+
+Transformation 1 applied: filter
+Transformation 2 applied: withColumn
+Transformation 3 applied: select
++--------+----------+-------------+
+|order_id|product_id|gross_revenue|
++--------+----------+-------------+
+|       3|       P04|        68000|
+|       4|       P05|        22500|
+|       5|       P06|       144000|
+|      11|       P06|        96000|
+|       7|       P02|       112000|
++--------+----------+-------------+
+only showing top 5 rows
+
+
+
+17) agg_df = sales_df.groupBy("product_id").agg(F.sum("quantity").alias("total_qty"))
+    agg_df.explain(True)
+    agg_df.collect()
+
+
+[Row(product_id='P04', total_qty=83334),
+ Row(product_id='P03', total_qty=66667),
+ Row(product_id='P05', total_qty=66665),
+ Row(product_id='P06', total_qty=83330),
+ Row(product_id='P02', total_qty=83336),
+ Row(product_id='P01', total_qty=66668)]
+
+
+
+
+PART - F:
+---------
+
+
+18) completed_df = sales_df.filter(F.col("order_status") == "Completed").cache()
+
+    start_time = time.time()
+    print("Count 1:", completed_df.count())
+    print(f"First action time: {time.time() - start_time:.4f} seconds")
+
+    start_time = time.time()
+    print("Count 2:", completed_df.count())
+    print(f"Second action time (cached): {time.time() - start_time:.4f} seconds")
+
+
+Count 1: 77923
+First action time: 7.7236 seconds
+Count 2: 77923
+Second action time (cached): 1.8704 seconds
+
+
+
+19) filtered_df = sales_df.filter(F.col("quantity") > 5).persist(StorageLevel.MEMORY_AND_DISK)
+    print("Count:", filtered_df.count())
+    filtered_df.unpersist().show(5)
+
+
+Count: 37500
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|order_id|order_date|store_id|product_id|quantity|unit_price|discount_pct|order_status|payment_method|salesperson_id|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+|      15|2026-01-16|     S02|       P04|       8|     17000|          15|   Completed|           UPI|         EMP04|
+|      14|2026-01-15|     S01|       P03|       7|      3500|          10|    Returned|          Cash|         EMP03|
+|       5|2026-01-06|     S02|       P06|       6|     24000|           5|   Completed|          Cash|         EMP06|
+|       7|2026-01-08|     S03|       P02|       8|     14000|           5|    Returned|          Card|         EMP08|
+|      13|2026-01-14|     S01|       P02|       6|     14000|          10|   Completed|          Card|         EMP02|
++--------+----------+--------+----------+--------+----------+------------+------------+--------------+--------------+
+only showing top 5 rows
+
+
+20) cached_agg = sales_df.groupBy("store_id").agg(F.sum("quantity").alias("total_qty")).cache()
+    print("Count: ",cached_agg.count())
+    cached_agg.explain(True)
+
+
+Count:  4
+
+
+
+
+
+PART - G:
+---------
+
+
+21) print("Current partitions:", sales_df.rdd.getNumPartitions())
+    repartitioned_df = sales_df.repartition(8)
+    print("New partitions:", repartitioned_df.rdd.getNumPartitions())
+
+
+Current partitions: 2
+New partitions: 8
+
+
+
+22) repartitioned_df.groupBy(F.spark_partition_id().alias("partition_id")) \
+    .count() \
+    .orderBy("partition_id") \
+    .show()
+
++------------+-----+
+|partition_id|count|
++------------+-----+
+|           0|12500|
+|           1|12500|
+|           2|12500|
+|           3|12500|
+|           4|12500|
+|           5|12500|
+|           6|12500|
+|           7|12500|
++------------+-----+
+
+
+
+23) store_repart = sales_df.repartition(6, "store_id")
+
+    store_repart.groupBy(F.spark_partition_id().alias("partition_id")) \
+      .agg(F.collect_set("store_id").alias("stores_present")) \
+      .show(truncate=False)
+
++------------+--------------+
+|partition_id|stores_present|
++------------+--------------+
+|1           |[S03]         |
+|3           |[S02]         |
+|4           |[S01]         |
+|5           |[S04]         |
++------------+--------------+
+
+
+
+24) df_12 = sales_df.repartition(12)
+    df_coalesced = df_12.coalesce(4)
+    df_repart_4 = df_12.repartition(4)
+
+    print("Coalesce Execution Plan")
+    df_coalesced.explain(True)
+
+    print("Repartition Execution Plan")
+    df_repart_4.explain(True)
+
+
+25) sales_df.repartition(4).write.option("header", "true").csv("sales_output_csv")
+
+
+
+
+
+FINAL CHALLENGE:
+----- ----------
+
+
+pipeline_df = (
+    sales_df
+    .filter(F.col("order_status") == "Completed") 					#1
+    .na.fill(0, subset=["discount_pct"]) 						#2
+    .join(products_df, "product_id") 							#3
+    .join(stores_df, "store_id")
+    .withColumn("gross_revenue", F.col("quantity") * F.col("unit_price")) 		#4
+    .withColumn(
+        "discounted_revenue",
+        F.col("gross_revenue") * (1 - F.col("discount_pct") / 100)
+    )
+    .groupBy("region", "category") 							#5
+    .agg( 										#6
+        F.sum("discounted_revenue").alias("total_revenue"),
+        F.count("order_id").alias("transaction_count")
+    )
+)
+
+
+7) window_spec_final = Window.partitionBy("region").orderBy(F.desc("total_revenue"))
+   ranked_pipeline_df = pipeline_df.withColumn("revenue_rank", F.dense_rank().over(window_spec_final))
+
+8) ranked_pipeline_df.cache()
+
+9) ranked_pipeline_df.show(truncate=False)
+
++------+-----------+-------------+-----------------+------------+
+|region|category   |total_revenue|transaction_count|revenue_rank|
++------+-----------+-------------+-----------------+------------+
+|South |Electronics|2.0242794E9  |19484            |1           |
+|South |Office     |6.060058E8   |6495             |2           |
+|South |Accessories|1.05018025E8 |6494             |3           |
+|South |Networking |8.2684125E7  |6494             |4           |
+|West  |Electronics|2.2992404E9  |12985            |1           |
+|West  |Accessories|6.42985E7    |6493             |2           |
+|North |Electronics|8.551824E8   |6492             |1           |
+|North |Office     |4.12114E8    |6492             |2           |
+|North |Networking |1.35026775E8 |6494             |3           |
++------+-----------+-------------+-----------------+------------+
+
+
+10) ranked_pipeline_df.repartition(2).write.mode("overwrite").parquet("pipeline_output_parquet")
