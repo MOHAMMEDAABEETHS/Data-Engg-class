@@ -1,0 +1,306 @@
+!pip install -q pyspark
+
+from google.colab import files
+from pyspark.sql import SparkSession, functions as F
+from pyspark.sql.window import Window
+from pyspark import StorageLevel
+
+
+spark = SparkSession.builder.appName("StreamingSet4") \
+    .getOrCreate()
+
+uploaded = files.upload()
+
+sessions_df = spark.read.csv("watch_sessions_80000.csv", header=True, inferSchema=True)
+extra_df = spark.read.csv("watch_sessions_extra_10000.csv", header=True, inferSchema=True)
+subscribers_df = spark.read.csv("subscriber_master_2400.csv", header=True, inferSchema=True)
+content_df = spark.read.csv("content_catalog_120.csv", header=True, inferSchema=True)
+devices_df = spark.read.csv("device_master_8.csv", header=True, inferSchema=True)
+plans_df = spark.read.csv("subscription_plans_4.csv", header=True, inferSchema=True)
+
+print("Main sessions:",sessions_df.count())
+
+
+
+PART - A:
+---------
+
+1) sessions_df.printSchema()
+   sessions_df.show(10, truncate=False)
+
+
+2) sessions_df.select("session_id", "subscriber_id", "content_id", "watch_minutes", "session_status") \
+    .filter((F.col("session_status") == "Completed") & (F.col("watch_minutes") > 60)) \
+    .show(10, truncate=False)
+
+
+3) engaged_df = sessions_df.withColumn("watch_hours", F.col("watch_minutes") / 60.0) \
+    .withColumn(
+        "high_engagement",
+        F.when(F.col("completion_pct").isNull(), None)
+         .when(F.col("completion_pct") >= 75, True)
+         .otherwise(False)
+    )
+
+   engaged_df.select("session_id", "watch_minutes", "watch_hours", "completion_pct", "high_engagement").show(10, truncate=False)
+
+
+4) sessions_df.orderBy(F.col("data_used_mb").desc()).show(20, truncate=False)
+
+
+
+
+PART - B:
+---------
+
+5) sessions_df.select([
+      F.count(F.when(F.col(c).isNull(), c)).alias(f"{c}_null_count")
+      for c in ["subscriber_id", "device_id", "completion_pct", "buffering_seconds", "user_rating"]
+   ]).show()
+
+
+6) filled_buffer_df = sessions_df.na.fill({"buffering_seconds": 0.0})
+   filled_buffer_df.select("session_id", "buffering_seconds").show(5)
+
+
+7) initial_count = sessions_df.count()
+   cleaned_device_df = sessions_df.dropna(subset=["device_id"])
+   final_count = cleaned_device_df.count()
+   print(f"Initial count: {initial_count:,} | Count after dropping missing device_id: {final_count:,} | Removed: {initial_count - final_count:,}")
+
+
+8) banded_sessions_df = sessions_df.withColumn(
+      "completion_category",
+      F.when(F.col("completion_pct").isNull(), "Unknown")
+        .when(F.col("completion_pct") < 30, "Low")
+        .when((F.col("completion_pct") >= 30) & (F.col("completion_pct") < 90), "Medium")
+        .otherwise("High")
+   )
+   banded_sessions_df.select("session_id", "completion_pct", "completion_category").show(10, truncate=False)
+
+
+
+
+
+PART - C:
+---------
+
+9) sessions_df.join(content_df, "content_id") \
+     .groupBy("genre") \
+     .agg(
+         F.count("session_id").alias("session_count"),
+         F.sum("watch_minutes").alias("total_watch_minutes")
+     ).show(truncate=False)
+
+
+10) sessions_df.join(devices_df, "device_id") \
+      .groupBy("device_type") \
+      .agg(
+          F.avg("buffering_seconds").alias("avg_buffering_seconds"),
+          F.avg("watch_minutes").alias("avg_watch_minutes")
+     ).show(truncate=False)
+
+
+11) sessions_df.filter(F.col("subscriber_id").isNotNull()) \
+      .join(subscribers_df, "subscriber_id") \
+      .join(plans_df, "plan_id") \
+      .groupBy("plan_name") \
+      .agg(
+          (F.sum(F.when(F.col("session_status") == "Completed", 1).otherwise(0)) / F.count("session_id") * 100).alias("completion_rate_pct")
+      ).show(truncate=False)
+
+
+12) subscribers_df.filter(F.col("subscriber_status") == "Active") \
+      .join(plans_df, "plan_id") \
+      .groupBy("plan_name", "monthly_fee_inr") \
+      .agg(F.count("subscriber_id").alias("active_subscribers")) \
+      .select(
+          "plan_name", 
+          "active_subscribers", 
+          (F.col("active_subscribers") * F.col("monthly_fee_inr")).alias("mrr")
+      ).show(truncate=False)
+
+
+13) unmatched_subscribers = sessions_df.filter(F.col("subscriber_id").isNotNull()) \
+       .join(subscribers_df, "subscriber_id", "left_anti").count()
+
+    unmatched_devices = sessions_df.filter(F.col("device_id").isNotNull()) \
+       .join(devices_df, "device_id", "left_anti").count()
+
+    print(f"Sessions with non-null subscriber_id having no master match: {unmatched_subscribers:,}")
+    print(f"Sessions with non-null device_id having no master match: {unmatched_devices:,}")
+
+
+
+
+
+PART - D:
+---------
+
+14) timestamp_sessions = sessions_df.withColumn("parsed_start", F.to_timestamp("session_start")) \
+      .withColumn("year", F.year("parsed_start")) \
+      .withColumn("month", F.month("parsed_start"))
+
+    timestamp_sessions.filter(F.col("year") == 2026) \
+      .groupBy("year", "month") \
+      .agg(
+          F.count("session_id").alias("monthly_sessions"),
+          F.sum("watch_minutes").alias("monthly_watch_minutes")
+      ) \
+      .orderBy("month").show(12, truncate=False)
+
+
+15) sessions_df.join(subscribers_df, "subscriber_id") \
+      .withColumn("days_since_signup", F.datediff(F.to_timestamp("session_start"), F.col("signup_date"))) \
+      .select("session_id", "subscriber_id", "signup_date", "session_start", "days_since_signup") \
+      .orderBy("session_start") \
+      .show(10, truncate=False)
+
+
+16) sessions_df.withColumn("day_of_week", F.dayofweek(F.to_timestamp("session_start"))) \
+      .withColumn("day_type", F.when(F.col("day_of_week").isin([1, 7]), "Weekend").otherwise("Weekday")) \
+      .groupBy("day_type") \
+      .agg(F.avg("watch_minutes").alias("avg_watch_minutes")) \
+      .show(truncate=False)
+
+
+17) genre_content_watch = sessions_df.join(content_df, "content_id") \
+      .groupBy("genre", "content_title") \
+      .agg(F.sum("watch_minutes").alias("total_watch_minutes"))
+
+    window_genre = Window.partitionBy("genre").orderBy(F.col("total_watch_minutes").desc())
+
+    genre_content_watch.withColumn("rank", F.dense_rank().over(window_genre)) \
+      .filter(F.col("rank") <= 3) \
+      .show(20, truncate=False)
+
+
+18) window_subscriber = Window.partitionBy("subscriber_id").orderBy(F.col("session_start").desc())
+
+    sessions_df.filter(F.col("subscriber_id").isNotNull()) \
+      .withColumn("rn", F.row_number().over(window_subscriber)) \
+      .filter(F.col("rn") == 1) \
+      .select("subscriber_id", "session_id", "session_start", "watch_minutes") \
+      .show(10, truncate=False)
+
+
+19) window_lag = Window.partitionBy("subscriber_id").orderBy("session_start", "session_id")
+
+    sessions_df.filter(F.col("subscriber_id").isNotNull()) \
+      .withColumn("prev_watch_minutes", F.lag("watch_minutes", 1).over(window_lag)) \
+      .select("subscriber_id", "session_id", "session_start", "watch_minutes", "prev_watch_minutes") \
+      .show(10, truncate=False)
+
+
+
+
+
+PART - E:
+---------
+
+20) print(f"Sessions count: {sessions_df.count():,}")
+    print(f"Extra count: {extra_df.count():,}")
+
+    combined_sessions = sessions_df.unionByName(extra_df)
+    print(f"Combined count: {combined_sessions.count():,}")
+
+    deduped_sessions = combined_sessions.dropDuplicates(["session_id"])
+    print(f"Unique count after dedup: {deduped_sessions.count():,}")
+
+
+21) lazy_pipe = sessions_df.filter(F.col("watch_minutes") > 30) \
+      .join(content_df, "content_id") \
+      .groupBy("genre") \
+      .agg(F.avg("watch_minutes").alias("avg_watch")) \
+      .orderBy(F.col("avg_watch").desc())
+    lazy_pipe.explain(True)
+
+
+22) completed_cached = sessions_df.filter(F.col("session_status") == "Completed").cache()
+
+    print("First action count:", completed_cached.count())
+    print("Second action count (from cache):", completed_cached.count())
+
+    print(f"Is cached? {completed_cached.is_cached}")
+
+
+23) streaming_4k = sessions_df.filter(F.col("stream_quality") == "4k")
+    streaming_4k.persist(StorageLevel.MEMORY_AND_DISK)
+
+    print("4K count 1:", streaming_4k.count())
+    print("4K count 2:", streaming_4k.count())
+
+    streaming_4k.unpersist()
+
+
+24) repart_sessions = sessions_df.repartition(8)
+
+    repart_sessions.withColumn("part_id", F.spark_partition_id()) \
+      .groupBy("part_id") \
+      .count() \
+      .orderBy("part_id") \
+      .show(truncate=False)
+
+
+25) sessions_df.repartition(8).coalesce(2).explain(True)
+
+    sessions_df.repartition(8).repartition(2).explain(True)
+
+    deduped_sessions.repartition(3) \
+      .write \
+      .mode("overwrite") \
+      .parquet("streaming_sessions_output.parquet")
+
+
+
+
+
+FINAL CAPSTONE:
+---------------
+
+1) capstone_sessions = sessions_df.unionByName(extra_df).dropDuplicates(["session_id"])
+
+
+2) capstone_cleaned = capstone_sessions.na.fill({"buffering_seconds": 0.0})
+
+
+3) capstone_enriched = capstone_cleaned.join(subscribers_df, "subscriber_id") \
+      .join(content_df, "content_id") \
+      .join(devices_df, "device_id") \
+      .join(plans_df, "plan_id") \
+      .withColumn("month", F.date_format(F.to_timestamp("session_start"), "yyyy-MM")) \
+      .withColumn("watch_hours", F.col("watch_minutes") / 60.0)
+
+
+4) monthly_streaming_report = capstone_enriched.groupBy("region", "genre", "month") \
+      .agg(
+          F.count("session_id").alias("session_count"),
+          F.sum("watch_hours").alias("total_watch_hours"),
+          (F.sum(F.when(F.col("session_status") == "Completed", 1).otherwise(0)) / F.count("session_id") * 100).alias("completion_rate_pct"),
+          F.avg("buffering_seconds").alias("avg_buffering_seconds"),
+          F.sum("data_used_mb").alias("total_data_usage_mb")
+      )
+
+
+5) content_genre_ranked = capstone_enriched.groupBy("genre", "content_title") \
+    .agg(F.sum("watch_hours").alias("genre_watch_hours"))
+
+   window_capstone_rank = Window.partitionBy("genre").orderBy(F.col("genre_watch_hours").desc())
+   ranked_content_report = content_genre_ranked.withColumn("title_rank_in_genre", F.dense_rank().over(window_capstone_rank)) \
+       .filter(F.col("title_rank_in_genre") <= 3)
+
+   ranked_content_report.show(15, truncate=False)
+
+
+6) monthly_streaming_report.cache()
+   print(f"Capstone Report Total Rows: {monthly_streaming_report.count():,}")
+
+   monthly_streaming_report.show(10, truncate=False)
+
+   monthly_streaming_report.unpersist()
+
+
+7) monthly_streaming_report.repartition(3) \
+       .write \
+       .mode("overwrite") \
+       .parquet("streaming_performance_report.parquet")

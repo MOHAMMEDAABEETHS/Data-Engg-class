@@ -1,0 +1,294 @@
+!pip install -q pyspark
+
+from google.colab import files
+from pyspark.sql import SparkSession, functions as F
+from pyspark.sql.window import Window
+from pyspark import StorageLevel
+import time
+
+spark = SparkSession.builder.appName("Energy Assessment Set 03") \
+    .getOrCreate()
+
+
+uploaded = files.upload()
+
+
+readings_df = spark.read.csv("meter_readings_90000.csv", header=True, inferSchema=True)
+readings_extra_df = spark.read.csv("meter_readings_extra_12000.csv", header=True, inferSchema=True)
+meter_master_df = spark.read.csv("meter_master.csv", header=True, inferSchema=True)
+substation_master_df = spark.read.csv("substation_master.csv", header=True, inferSchema=True)
+tariff_master_df = spark.read.csv("tariff_master.csv", header=True, inferSchema=True)
+maintenance_df = spark.read.csv("maintenance_tickets_1600.csv", header=True, inferSchema=True)
+
+
+
+SECTION - 1:
+------------
+
+
+1) readings_df.printSchema()
+   readings_df.show(10, truncate=False)
+
+
+2) selected_readings_df = readings_df.select("reading_id", "meter_id", "reading_timestamp", "energy_kwh", "reading_status")
+   renamed_source_df = readings_df.withColumnRenamed("source_type", "collection_mode")
+   renamed_source_df.select("reading_id", "collection_mode").show(5, truncate=False)
+
+
+3) filtered_readings_df = readings_df.filter((F.col("reading_status") == "Valid") & (F.col("energy_kwh") > 20)) \
+    .orderBy(F.col("energy_kwh").desc())
+
+   filtered_readings_df.show(5, truncate=False)
+
+
+4) banded_readings_df = readings_df.withColumn(
+    "energy_band",
+    F.when(F.col("energy_kwh").isNull(), "Unknown")
+     .when(F.col("energy_kwh") < 5, "Low")
+     .when((F.col("energy_kwh") >= 5) & (F.col("energy_kwh") <= 25), "Medium")
+     .otherwise("High")
+   )
+
+   banded_readings_df.select("reading_id", "energy_kwh", "energy_band").show(10, truncate=False)
+
+
+5) readings_df.select([
+    F.count(F.when(F.col(c).isNull(), c)).alias(f"{c}_null_count")
+    for c in ["energy_kwh", "voltage_v", "power_factor", "operator_id"]
+   ]).show()
+
+
+6) filled_readings_df = readings_df.na.fill({"operator_id": "UNASSIGNED", "power_factor": 0.90})
+   filled_readings_df.select("reading_id", "operator_id", "power_factor").filter(F.col("operator_id") == "UNASSIGNED").show(5)
+
+
+7) initial_count = readings_df.count()
+   cleaned_readings_df = readings_df.dropna(subset=["energy_kwh", "voltage_v"])
+   final_count = cleaned_readings_df.count()
+
+   print(f"Initial rows: {initial_count:,} | Cleaned rows: {final_count:,} | Rows removed: {initial_count - final_count:,}")
+
+
+8) readings_df.filter(F.col("reading_status") == "Valid") \
+    .join(meter_master_df, "meter_id") \
+    .groupBy("site_type") \
+    .agg(F.sum("energy_kwh").alias("total_valid_energy_kwh")) \
+    .show(truncate=False)
+
+
+9) readings_df.filter(F.col("reading_status") == "Valid") \
+    .join(meter_master_df, "meter_id") \
+    .join(substation_master_df, "substation_id") \
+    .groupBy("region", "city") \
+    .agg(F.sum("energy_kwh").alias("total_valid_energy_kwh")) \
+    .orderBy("region", "city") \
+    .show(10, truncate=False)
+
+
+10) tariff_calc_df = readings_df.filter((F.col("reading_status") != "Rejected") & (F.col("energy_kwh").isNotNull())) \
+      .join(meter_master_df, "meter_id") \
+      .join(tariff_master_df, "tariff_id") \
+      .withColumn("energy_charge_inr", F.col("energy_kwh") * F.col("rate_per_kwh_inr"))
+
+    tariff_calc_df.select("reading_id", "meter_id", "tariff_id", "energy_kwh", "rate_per_kwh_inr", "energy_charge_inr").show(5, truncate=False)
+
+
+11) maintenance_df.join(meter_master_df, "meter_id") \
+      .groupBy("site_type", "severity") \
+      .agg(
+          F.count("ticket_id").alias("ticket_count"),
+          F.avg("maintenance_cost_inr").alias("avg_maintenance_cost_inr")
+      ) \
+      .orderBy("site_type", "severity") \
+      .show(truncate=False)
+
+
+12) readings_df.join(meter_master_df, "meter_id") \
+      .join(substation_master_df, "substation_id") \
+      .groupBy("substation_id", "city", "region") \
+      .agg(
+          F.avg("voltage_v").alias("avg_voltage_v"),
+          F.sum("outage_minutes").alias("total_outage_minutes")
+      ) \
+      .orderBy(F.col("total_outage_minutes").desc()) \
+      .show(5, truncate=False)
+
+
+13) readings_df.groupBy("source_type", "reading_status") \
+      .count() \
+      .orderBy(F.col("count").desc()) \
+      .show(truncate=False)
+
+
+
+
+SECTION - 3:
+------------
+
+
+14) timestamp_df = readings_df.withColumn("parsed_timestamp", F.to_timestamp("reading_timestamp")) \
+      .withColumn("year", F.year("parsed_timestamp")) \
+      .withColumn("month", F.month("parsed_timestamp"))
+
+    timestamp_df.filter(F.col("reading_status") == "Valid") \
+      .join(meter_master_df, "meter_id") \
+      .join(substation_master_df, "substation_id") \
+      .groupBy("region", "year", "month") \
+      .agg(F.sum("energy_kwh").alias("monthly_valid_energy")) \
+      .orderBy("region", "year", "month") \
+      .show(10, truncate=False)
+
+
+15) valid_meter_energy = readings_df.filter(F.col("reading_status") == "Valid") \
+      .join(meter_master_df, "meter_id") \
+      .groupBy("substation_id", "meter_id") \
+      .agg(F.sum("energy_kwh").alias("total_energy"))
+
+    window_substation = Window.partitionBy("substation_id").orderBy(F.col("total_energy").desc())
+
+    ranked_meters_df = valid_meter_energy.withColumn("rank", F.dense_rank().over(window_substation)) \
+      .filter(F.col("rank") <= 3)
+
+    ranked_meters_df.show(15, truncate=False)
+
+
+16) window_cumulative = Window.partitionBy("meter_id").orderBy("reading_timestamp", "reading_id")
+
+    cumulative_df = readings_df.filter(F.col("reading_status") == "Valid") \
+      .withColumn("cumulative_energy_kwh", F.sum("energy_kwh").over(window_cumulative))
+
+    cumulative_df.select("meter_id", "reading_timestamp", "reading_id", "energy_kwh", "cumulative_energy_kwh").show(10, truncate=False)
+
+
+17) print(f"Main readings count: {readings_df.count():,}")
+    print(f"Extra readings count: {readings_extra_df.count():,}")
+
+    combined_readings_df = readings_df.unionByName(readings_extra_df)
+    print(f"Combined row count before deduplication: {combined_readings_df.count():,}")
+
+18) deduped_readings_df = combined_readings_df.dropDuplicates(["reading_id"])
+    final_unique_count = deduped_readings_df.count()
+    print(f"Final unique reading count after deduplication: {final_unique_count:,}")
+
+19) lazy_pipeline = readings_df.filter(F.col("energy_kwh") > 10) \
+      .join(meter_master_df, "meter_id") \
+      .groupBy("site_type") \
+      .agg(F.avg("energy_kwh").alias("avg_energy")) \
+      .orderBy(F.col("avg_energy").desc())
+
+   lazy_pipeline.explain(True)
+
+
+20) valid_readings_cached = readings_df.filter(F.col("reading_status") == "Valid")
+    valid_readings_cached.cache()
+
+    start_time = time.time()
+    count_1 = valid_readings_cached.count()
+    time_1 = time.time() - start_time
+
+    start_time = time.time()
+    count_2 = valid_readings_cached.count()
+    time_2 = time.time() - start_time
+
+    print(f"Is cached? {valid_readings_cached.is_cached}")
+    print(f"Action 1 (Populate Cache) Time: {time_1:.4f} seconds (Count: {count_1:,})")
+    print(f"Action 2 (From Cache) Time: {time_2:.4f} seconds (Count: {count_2:,})")
+
+
+21) outage_readings = readings_df.filter(F.col("outage_minutes") > 0)
+    outage_readings.persist(StorageLevel.MEMORY_AND_DISK)
+
+    print("Outage row count 1:", outage_readings.count())
+    print("Outage row count 2 (cached/persisted):", outage_readings.count())
+    outage_readings.unpersist()
+
+
+22) joined_df = readings_df.join(meter_master_df, "meter_id")
+
+    start_t1 = time.time()
+    joined_df.groupBy("site_type").agg(F.sum("energy_kwh").alias("total_energy_kwh")).collect()
+    time_no_cache_1 = time.time() - start_t1
+
+    start_t2 = time.time()
+    joined_df.groupBy("site_type").agg(F.sum("energy_kwh").alias("total_energy_kwh")).collect()
+    time_no_cache_2 = time.time() - start_t2
+
+    print(f"Uncached Run 1: {time_no_cache_1:.4f} seconds")
+    print(f"Uncached Run 2: {time_no_cache_2:.4f} seconds")
+
+    cached_joined_df = joined_df.cache()
+
+    start_t3 = time.time()
+    cached_joined_df.groupBy("site_type").agg(F.sum("energy_kwh").alias("total_energy_kwh")).collect()
+    time_cache_1 = time.time() - start_t3
+
+    start_t4 = time.time()
+    cached_joined_df.groupBy("site_type").agg(F.sum("energy_kwh").alias("total_energy_kwh")).collect()
+    time_cache_2 = time.time() - start_t4
+
+    print(f"Cached Run 1 (Populate): {time_cache_1:.4f} seconds")
+    print(f"Cached Run 2 (From Cache): {time_cache_2:.4f} seconds")
+
+    cached_joined_df.unpersist()
+
+
+23) repart_8_df = readings_df.repartition(8)
+    partition_counts_df = repart_8_df.withColumn("partition_id", F.spark_partition_id()) \
+      .groupBy("partition_id") \
+      .count() \
+      .orderBy("partition_id")
+
+    partition_counts_df.show(truncate=False)
+
+
+24) readings_df.repartition(12).coalesce(3).explain()
+    readings_df.repartition(12).repartition(3).explain()
+
+
+25) enriched_readings_df = cleaned_readings_df.join(meter_master_df, "meter_id") \
+      .join(substation_master_df, "substation_id")
+
+    enriched_readings_df.repartition(4) \
+      .write \
+      .mode("overwrite") \
+      .parquet("enriched_energy_readings.parquet")
+
+
+
+
+SECTION - 3:  (FINAL CAPSTONE)
+------------   ----- --------
+
+
+capstone_readings = readings_df.unionByName(readings_extra_df).dropDuplicates(["reading_id"])
+
+capstone_cleaned = capstone_readings.filter(F.col("reading_status") != "Rejected") \
+    .filter(F.col("energy_kwh").isNotNull())
+
+capstone_enriched = capstone_cleaned.join(meter_master_df, "meter_id") \
+    .join(substation_master_df, "substation_id") \
+    .join(tariff_master_df, "tariff_id") \
+    .withColumn("month", F.date_format(F.to_timestamp("reading_timestamp"), "yyyy-MM")) \
+    .withColumn("estimated_energy_charge_inr", F.col("energy_kwh") * F.col("rate_per_kwh_inr"))
+
+monthly_report_df = capstone_enriched.groupBy("region", "site_type", "month") \
+    .agg(
+        F.sum("energy_kwh").alias("total_kwh"),
+        F.sum("estimated_energy_charge_inr").alias("total_estimated_charges_inr"),
+        F.sum("outage_minutes").alias("total_outage_minutes"),
+        (F.avg(F.when(F.col("outage_minutes") > 0, 1.0).otherwise(0.0)) * 100).alias("outage_reporting_pct")
+    )
+
+window_region_rank = Window.partitionBy("region").orderBy(F.col("total_estimated_charges_inr").desc())
+ranked_report_df = monthly_report_df \
+    .withColumn("site_type_rank_in_region", F.dense_rank().over(window_region_rank))
+
+ranked_report_df.cache()
+print(f"Final Report Total Rows: {ranked_report_df.count():,}")
+ranked_report_df.show(15, truncate=False)
+ranked_report_df.unpersist()
+
+ranked_report_df.repartition(2) \
+    .write \
+    .mode("overwrite") \
+    .parquet("energy_consumption_reliability_report.parquet")
